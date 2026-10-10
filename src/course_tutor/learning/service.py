@@ -11,6 +11,7 @@ from ..errors import (
     ValidationError,
 )
 from ..models import (
+    ALLOWED_DEMONSTRATED_LEVELS,
     Attempt,
     AttemptEvent,
     EvidenceRecord,
@@ -24,6 +25,7 @@ from ..storage.repositories import (
     EvidenceRepository,
     ExerciseRepository,
     TopicRepository,
+    compute_exercise_version_hash,
 )
 from .policy import determine_demonstrated_level
 
@@ -57,6 +59,14 @@ class LearningService:
         if mode == "diagnostic" and ex_ver.validation_state != "validated":
             raise UnvalidatedQuestionError(exercise_version_id, ex_ver.validation_state)
 
+        current_revision = len(ex_ver.revision_history) + 1
+        content_hash = compute_exercise_version_hash(
+            ex_ver.question_text,
+            ex_ver.reference_solution,
+            ex_ver.rubric,
+            ex_ver.subparts,
+        )
+
         attempt = Attempt(
             id=str(uuid.uuid4()),
             course_id=course_id,
@@ -65,6 +75,8 @@ class LearningService:
             mode=mode,
             status="open",
             current_revision=1,
+            exercise_revision=current_revision,
+            exercise_content_hash=content_hash,
         )
         return self.attempt_repo.create_attempt(attempt)
 
@@ -93,6 +105,11 @@ class LearningService:
             existing_events = self.attempt_repo.list_events(attempt_id)
             next_idx = len(existing_events) + 1
 
+            event_meta = dict(metadata or {})
+            if event_type == "work_submission":
+                event_meta.setdefault("exercise_revision", attempt.exercise_revision)
+                event_meta.setdefault("exercise_content_hash", attempt.exercise_content_hash)
+
             event = AttemptEvent(
                 id=str(uuid.uuid4()),
                 attempt_id=attempt_id,
@@ -101,7 +118,7 @@ class LearningService:
                 event_type=event_type,
                 subpart_key=subpart_key,
                 content=content,
-                metadata=metadata or {},
+                metadata=event_meta,
             )
             self.attempt_repo.add_event(event)
 
@@ -145,6 +162,17 @@ class LearningService:
             if not attempt:
                 raise ValidationError(f"Attempt '{attempt_id}' not found.")
 
+            ex_ver = self.exercise_repo.get_exercise_version(attempt.exercise_version_id)
+            if not ex_ver:
+                raise ValidationError(f"Exercise version '{attempt.exercise_version_id}' not found.")
+            current_rev = len(ex_ver.revision_history) + 1
+            current_hash = compute_exercise_version_hash(
+                ex_ver.question_text,
+                ex_ver.reference_solution,
+                ex_ver.rubric,
+                ex_ver.subparts,
+            )
+
             all_events = self.attempt_repo.list_events(attempt_id)
             created_evidence: List[EvidenceRecord] = []
             affected_topic_ids: set[str] = set()
@@ -153,6 +181,14 @@ class LearningService:
                 provided_subpart = ev_data.get("subpart_key")
                 topic_id = ev_data["topic_id"]
                 skill_id = ev_data["skill_id"]
+
+                # Defect 1: Validate demonstrated_level schema
+                requested_level = ev_data.get("demonstrated_level")
+                if requested_level is not None:
+                    if requested_level not in ALLOWED_DEMONSTRATED_LEVELS:
+                        raise ValidationError(
+                            f"Invalid demonstrated_level '{requested_level}'. Allowed levels: {sorted(ALLOWED_DEMONSTRATED_LEVELS)}."
+                        )
 
                 # Strict boolean parsing
                 try:
@@ -213,6 +249,31 @@ class LearningService:
                         submission_event = matching_submissions[-1]
                         subpart_key = submission_event.subpart_key or "default"
 
+                # Defect 2: Reject evaluating old submissions against changed exercise content
+                sub_meta = submission_event.metadata or {}
+                sub_rev = sub_meta.get("exercise_revision") or attempt.exercise_revision
+                sub_hash = sub_meta.get("exercise_content_hash") or attempt.exercise_content_hash
+
+                if sub_rev is not None and sub_rev != current_rev:
+                    raise ValidationError(
+                        f"Cannot evaluate submission against outdated exercise revision: submission was for revision {sub_rev}, current revision is {current_rev}."
+                    )
+                if sub_hash is not None and sub_hash != current_hash:
+                    raise ValidationError(
+                        "Cannot evaluate submission against outdated exercise content: submission content hash does not match current exercise version."
+                    )
+
+                caller_rev = ev_data.get("exercise_revision") or ev_data.get("expected_revision")
+                if caller_rev is not None and caller_rev != current_rev:
+                    raise ValidationError(
+                        f"Evaluation expected revision {caller_rev} does not match current exercise revision {current_rev}."
+                    )
+                caller_hash = ev_data.get("exercise_content_hash") or ev_data.get("expected_content_hash")
+                if caller_hash is not None and caller_hash != current_hash:
+                    raise ValidationError(
+                        "Evaluation expected content hash does not match current exercise version."
+                    )
+
                 # Reject duplicate active evaluation for the same (subpart_key, skill_id, submission_event)
                 existing_active = [
                     e for e in self.evidence_repo.list_evidence(attempt.course_id, attempt_id=attempt_id, status="active")
@@ -238,7 +299,6 @@ class LearningService:
                     and e.event_index <= submission_event.event_index
                 ]
 
-                requested_level = ev_data.get("demonstrated_level")
                 has_solution = any(e.event_type == "solution_revealed" for e in subpart_assistance_events)
                 has_hint = any(e.event_type == "hint_given" for e in subpart_assistance_events)
 
@@ -270,6 +330,8 @@ class LearningService:
                     error_category=error_category,
                     rationale=rationale,
                     status="active",
+                    exercise_revision=sub_rev or current_rev,
+                    exercise_content_hash=sub_hash or current_hash,
                 )
                 self.evidence_repo.create_evidence(ev_rec)
                 created_evidence.append(ev_rec)
@@ -311,6 +373,10 @@ class LearningService:
 
             if replacement:
                 rep_level = replacement.get("demonstrated_level")
+                if rep_level not in ALLOWED_DEMONSTRATED_LEVELS:
+                    raise ValidationError(
+                        f"Invalid demonstrated_level '{rep_level}'. Allowed levels: {sorted(ALLOWED_DEMONSTRATED_LEVELS)}."
+                    )
                 attempt_events = self.attempt_repo.list_events(old_ev.attempt_id)
                 sub_event = next((e for e in attempt_events if e.id == old_ev.event_id), None)
                 if not sub_event or sub_event.event_type != "work_submission":
@@ -369,6 +435,8 @@ class LearningService:
                     error_category=replacement.get("error_category"),
                     rationale=replacement.get("rationale", f"Correction: {correction_reason}"),
                     status="active",
+                    exercise_revision=old_ev.exercise_revision,
+                    exercise_content_hash=old_ev.exercise_content_hash,
                 )
                 resulting_ev = self.evidence_repo.supersede_evidence(evidence_id, new_rec, correction_reason)
             else:

@@ -138,6 +138,7 @@ def test_complete_multiturn_workflow_efficiency_benchmark(temp_workspace):
             reference_solution="P(A|B) = 0.4",
             rubric={"criteria": "correct posterior probability", "max_points": 10},
             checks=["mathematical_consistency_verified"],
+            expected_revision=1,
         )
 
         # Turn 4: Start attempt with idempotency receipt

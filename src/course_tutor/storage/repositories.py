@@ -21,11 +21,13 @@ from ..models import (
     Attempt,
     AttemptEvent,
     Course,
+    EVALUATED_DEMONSTRATED_LEVELS,
     EvidenceRecord,
     Exercise,
     ExerciseVersion,
     KnowledgeUnit,
     LearnerSettings,
+    OBSERVATION_DEMONSTRATED_LEVELS,
     OperationReceipt,
     Source,
     SourceSection,
@@ -861,6 +863,22 @@ class ExerciseRepository:
         if not initial_ver:
             raise ValidationError(f"Exercise version '{version_id}' not found.")
 
+        # Defect 3: Require caller-side identity validation
+        if expected_revision is None and expected_content_hash is None:
+            raise ValidationError(
+                "validate_exercise_version requires caller-side identity: expected_revision (positive integer) or expected_content_hash must be provided."
+            )
+        if expected_revision is not None:
+            if type(expected_revision) is not int or expected_revision < 1:
+                raise ValidationError(
+                    f"expected_revision must be a positive integer, got {expected_revision!r} ({type(expected_revision).__name__})."
+                )
+        if expected_content_hash is not None:
+            if not isinstance(expected_content_hash, str) or not expected_content_hash.strip():
+                raise ValidationError(
+                    f"expected_content_hash must be a non-empty string, got {expected_content_hash!r}."
+                )
+
         initial_revision = len(initial_ver.revision_history) + 1
         initial_hash = compute_exercise_version_hash(
             initial_ver.question_text,
@@ -900,42 +918,78 @@ class ExerciseRepository:
         effective_solution = reference_solution if reference_solution is not None else initial_ver.reference_solution
         effective_rubric = rubric if rubric is not None else initial_ver.rubric
 
-        # Defect 3: Define explicit verification-check schema and validation
+        # Defect 5: Unambiguous verification-check schema and validation
+        ALLOWED_CHECK_KEYS = frozenset({"status", "state", "reason", "notes", "metadata", "score"})
+        PASSING_CHECK_STATUSES = frozenset({"passed", "verified", "ok", "success"})
+        FAILING_OR_PENDING_STATUSES = frozenset({"failed", "falsified", "rejected", "pending", "unknown"})
+
         checks_dict: Dict[str, Any] = {}
         failing_checks: List[str] = []
 
         if checks is None:
             checks_dict = {}
         elif isinstance(checks, list):
-            if not checks:
-                checks_dict = {}
+            seen_check_names: set[str] = set()
             for c in checks:
                 if not isinstance(c, str) or not c.strip() or not re.match(r"^[a-zA-Z0-9_\-\.]+$", c.strip()):
                     raise ValidationError(f"Invalid verification check name: {c!r}")
-                checks_dict[c.strip()] = True
+                c_clean = c.strip()
+                c_norm = c_clean.lower()
+                if c_norm in seen_check_names:
+                    raise ValidationError(f"Duplicate verification check name: {c!r}")
+                seen_check_names.add(c_norm)
+                checks_dict[c_clean] = True
         elif isinstance(checks, dict):
-            if not checks:
-                checks_dict = {}
+            seen_check_names = set()
             for k, v in checks.items():
                 if not isinstance(k, str) or not k.strip() or not re.match(r"^[a-zA-Z0-9_\-\.]+$", k.strip()):
                     raise ValidationError(f"Invalid verification check name: {k!r}")
                 k_clean = k.strip()
+                k_norm = k_clean.lower()
+                if k_norm in seen_check_names:
+                    raise ValidationError(f"Duplicate verification check name: {k!r}")
+                seen_check_names.add(k_norm)
+
                 if type(v) is bool:
                     checks_dict[k_clean] = v
                     if not v:
                         failing_checks.append(k_clean)
                 elif isinstance(v, dict):
-                    status_val = v.get("status") or v.get("state")
-                    if not isinstance(status_val, str):
-                        raise ValidationError(f"Invalid structured check status for '{k}': {v!r}")
-                    s_lower = status_val.strip().lower()
-                    if s_lower in ("passed", "verified", "ok", "success"):
+                    unknown_keys = set(v.keys()) - ALLOWED_CHECK_KEYS
+                    if unknown_keys:
+                        raise ValidationError(
+                            f"Invalid keys in structured check for '{k}': {sorted(unknown_keys)}. Allowed keys: {sorted(ALLOWED_CHECK_KEYS)}."
+                        )
+                    status_val = v.get("status")
+                    state_val = v.get("state")
+                    if status_val is None and state_val is None:
+                        raise ValidationError(f"Structured check for '{k}' must provide 'status' or 'state'.")
+                    if status_val is not None and not isinstance(status_val, str):
+                        raise ValidationError(f"Structured check 'status' for '{k}' must be a string, got {status_val!r}.")
+                    if state_val is not None and not isinstance(state_val, str):
+                        raise ValidationError(f"Structured check 'state' for '{k}' must be a string, got {state_val!r}.")
+
+                    s_lower = status_val.strip().lower() if status_val is not None else None
+                    st_lower = state_val.strip().lower() if state_val is not None else None
+
+                    if s_lower is not None and st_lower is not None:
+                        is_s_pass = s_lower in PASSING_CHECK_STATUSES
+                        is_st_pass = st_lower in PASSING_CHECK_STATUSES
+                        is_s_fail = s_lower in FAILING_OR_PENDING_STATUSES
+                        is_st_fail = st_lower in FAILING_OR_PENDING_STATUSES
+                        if (is_s_pass and is_st_fail) or (is_s_fail and is_st_pass) or (s_lower != st_lower and (is_s_pass != is_st_pass)):
+                            raise ValidationError(
+                                f"Conflicting status ('{status_val}') and state ('{state_val}') in structured check for '{k}'."
+                            )
+
+                    effective_status = s_lower if s_lower is not None else st_lower
+                    if effective_status in PASSING_CHECK_STATUSES:
                         checks_dict[k_clean] = v
-                    elif s_lower in ("failed", "pending", "falsified", "rejected"):
+                    elif effective_status in FAILING_OR_PENDING_STATUSES:
                         checks_dict[k_clean] = v
                         failing_checks.append(k_clean)
                     else:
-                        raise ValidationError(f"Unknown structured check status for '{k}': {status_val!r}")
+                        raise ValidationError(f"Unknown structured check status for '{k}': {effective_status!r}")
                 else:
                     raise ValidationError(
                         f"Invalid check value type for check '{k}': {type(v).__name__} ({v!r}). "
@@ -1084,14 +1138,25 @@ class ExerciseRepository:
                 for tid in affected_topics:
                     evidence_repo.recompute_topic_state(ex_ver.course_id, tid)
 
+            final_revision = len(revision_history) + 1
+            final_hash = compute_exercise_version_hash(
+                ex_ver.question_text,
+                effective_solution,
+                effective_rubric,
+                ex_ver.subparts,
+            )
+
             provenance = {
                 "reviewer": reviewer,
                 "checks": checks_dict,
                 "notes": notes,
                 "validated_at": utc_now_iso(),
-                "checked_revision": current_revision,
-                "content_hash": current_hash,
+                "checked_revision": final_revision,
+                "content_hash": final_hash,
             }
+            if final_revision != current_revision:
+                provenance["previous_revision"] = current_revision
+                provenance["previous_content_hash"] = current_hash
             provenance_json = json.dumps(provenance)
 
             self.con.execute(
@@ -1227,8 +1292,8 @@ class AttemptRepository:
     def create_attempt(self, attempt: Attempt) -> Attempt:
         self.con.execute(
             """
-            INSERT INTO attempts (id, course_id, exercise_version_id, learner_id, mode, status, current_revision, started_at, updated_at, completed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO attempts (id, course_id, exercise_version_id, learner_id, mode, status, current_revision, started_at, updated_at, completed_at, exercise_revision, exercise_content_hash)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 attempt.id,
@@ -1241,13 +1306,15 @@ class AttemptRepository:
                 attempt.started_at,
                 attempt.updated_at,
                 attempt.completed_at,
+                attempt.exercise_revision,
+                attempt.exercise_content_hash,
             ),
         )
         return attempt
 
     def get_attempt(self, attempt_id: str) -> Optional[Attempt]:
         row = self.con.execute(
-            "SELECT id, course_id, exercise_version_id, learner_id, mode, status, current_revision, started_at, updated_at, completed_at "
+            "SELECT id, course_id, exercise_version_id, learner_id, mode, status, current_revision, started_at, updated_at, completed_at, exercise_revision, exercise_content_hash "
             "FROM attempts WHERE id = ?",
             (attempt_id,),
         ).fetchone()
@@ -1257,7 +1324,7 @@ class AttemptRepository:
 
     def get_open_attempt(self, course_id: str, learner_id: str) -> Optional[Attempt]:
         row = self.con.execute(
-            "SELECT id, course_id, exercise_version_id, learner_id, mode, status, current_revision, started_at, updated_at, completed_at "
+            "SELECT id, course_id, exercise_version_id, learner_id, mode, status, current_revision, started_at, updated_at, completed_at, exercise_revision, exercise_content_hash "
             "FROM attempts WHERE course_id = ? AND learner_id = ? AND status IN ('open', 'paused') ORDER BY updated_at DESC LIMIT 1",
             (course_id, learner_id),
         ).fetchone()
@@ -1339,8 +1406,9 @@ class EvidenceRepository:
             INSERT INTO evidence (
                 id, course_id, attempt_id, event_id, exercise_version_id, topic_id, skill_id,
                 subpart_key, demonstrated_level, error_category, rationale, status,
-                parent_evidence_id, correction_reason, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                parent_evidence_id, correction_reason, created_at, updated_at,
+                exercise_revision, exercise_content_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 rec.id,
@@ -1359,6 +1427,8 @@ class EvidenceRepository:
                 rec.correction_reason,
                 rec.created_at,
                 rec.updated_at,
+                rec.exercise_revision,
+                rec.exercise_content_hash,
             ),
         )
         return rec
@@ -1368,7 +1438,8 @@ class EvidenceRepository:
             """
             SELECT id, course_id, attempt_id, event_id, exercise_version_id, topic_id, skill_id,
                    subpart_key, demonstrated_level, error_category, rationale, status,
-                   parent_evidence_id, correction_reason, created_at, updated_at
+                   parent_evidence_id, correction_reason, created_at, updated_at,
+                   exercise_revision, exercise_content_hash
             FROM evidence WHERE id = ?
             """,
             (evidence_id,),
@@ -1479,8 +1550,8 @@ class EvidenceRepository:
         ass_success = sum(1 for e in active_evs if e.demonstrated_level == "assisted_success")
         partial_prog = sum(1 for e in active_evs if e.demonstrated_level == "partial_progress")
         errors = sum(1 for e in active_evs if e.demonstrated_level == "incorrect")
-
-        is_unassessed = len(active_evs) == 0
+        evaluated_evs = [e for e in active_evs if e.demonstrated_level in EVALUATED_DEMONSTRATED_LEVELS]
+        is_unassessed = len(evaluated_evs) == 0
         last_event_id = active_evs[-1].event_id if active_evs else None
         now = utc_now_iso()
 

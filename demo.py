@@ -105,6 +105,7 @@ def main():
             reference_solution="P(D|+) ≈ 0.083",
             rubric={"criteria": "correct posterior probability", "max_points": 10},
             checks=["verified_probabilistic_solution"],
+            expected_revision=1,
         )
         att = core.start_attempt(course_id, ex["exercise_version_id"], learner_id="student_1")["data"]
         att_id = att["id"]

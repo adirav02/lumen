@@ -255,6 +255,15 @@ These are tests to implement or review, not tests already passed.
 | F38 | Validation approves concurrently edited question | Validation attestation identifies exact question/solution/rubric revision and content identity; rejects stale attestations |
 | F39 | Reaffirming unchanged attempt link erases score | Reaffirming unchanged link is an idempotent no-op preserving points, evidence, history, and completion status |
 | F40 | Migration on schema-v4 workspace with duplicate attempt links | Pre-migration detection backs up to `backup_v4_assessment_items`, audits duplicates into `legacy_duplicate_attempt_links`, quarantines to `pending_review`, and allows clean Migration 005 |
+| F41 | Observation evidence level submitted for confirmed assessment score | Reject confirmed score; enforce strict evidence schema; require evaluated evidence; never report unassessed work as assisted |
+| F42 | Submission evaluated after exercise replacement or content change | Persist revision/hash on attempts & evidence (Migration 006); reject evaluating old submission or scoring using outdated evidence |
+| F43 | Question validation called without caller-side identity | Reject validation without caller identity; mandate positive integer `expected_revision` or non-empty `expected_content_hash` |
+| F44 | Question validation provenance records stale pre-update values | Provenance records final attested revision and content hash in provenance, atomically committed with snapshot history |
+| F45 | Contradictory structured verification checks submitted | Strict schema: reject conflicting status/state, disallowed keys, duplicate check names, and failing/pending statuses |
+| F46 | Caller-supplied learner ID in linking mismatches attempt owner | Verify caller learner ID matches attempt owner; reject attempt ownership overrides |
+| F47 | Repeated legacy repair reaffirms unchanged attempt link | Reaffirmation is an idempotent no-op preserving points, evidence, history, and completed assessment state |
+| F48 | CLI operation omits API parameters or receives malformed payload | Forward `submission_event_id`; reject non-object JSON with code 1; detect conflicting CLI options vs payload parameters |
+| F49 | Restore archive contains Zip Slip, symlink, absolute path, or traversal | Sandboxed path resolution strictly rejects traversal, symlinks, absolute paths in archive and manifest |
 
 Use small deterministic fixtures for storage guarantees and reviewed real examples for educational correctness. Validate the reasoning and required assumptions, not only the final numeric answer.
 

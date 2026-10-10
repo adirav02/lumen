@@ -43,6 +43,7 @@ def test_defect1_require_observed_validated_work_for_scores(temp_workspace):
             reference_solution="0.4",
             rubric={"max_points": 10},
             checks=["math_checked"],
+            expected_revision=1,
         )
         ex2 = core.create_exercise("prob-d1", "bayes_2", "Calculate P(B|A)")
         core.validate_exercise_version(
@@ -50,6 +51,7 @@ def test_defect1_require_observed_validated_work_for_scores(temp_workspace):
             reference_solution="0.8",
             rubric={"max_points": 10},
             checks=["math_checked"],
+            expected_revision=1,
         )
 
         diag = core.create_assessment(
@@ -139,6 +141,7 @@ def test_defect2_assessment_scores_follow_evidence_retractions(temp_workspace):
             reference_solution="3.5",
             rubric={"max_points": 10},
             checks=["verified"],
+            expected_revision=1,
         )
 
         diag = core.create_assessment(
@@ -225,12 +228,13 @@ def test_defect3_remove_automatic_exercise_validation(temp_workspace):
 
         # 3. Cannot validate without reference solution, rubric, and recorded checks
         with pytest.raises(ValidationError, match="missing reference or verified solution"):
-            core.validate_exercise_version(ex["exercise_version_id"])
+            core.validate_exercise_version(ex["exercise_version_id"], expected_revision=1)
 
         with pytest.raises(ValidationError, match="missing versioned rubric"):
             core.validate_exercise_version(
                 ex["exercise_version_id"],
                 reference_solution="pi = [0.5, 0.5]",
+                expected_revision=1,
             )
 
         with pytest.raises(ValidationError, match="missing recorded verification checks"):
@@ -238,6 +242,7 @@ def test_defect3_remove_automatic_exercise_validation(temp_workspace):
                 ex["exercise_version_id"],
                 reference_solution="pi = [0.5, 0.5]",
                 rubric={"max_points": 10},
+                expected_revision=1,
             )
 
         # 4. Valid explicit validation succeeds
@@ -246,6 +251,7 @@ def test_defect3_remove_automatic_exercise_validation(temp_workspace):
             reference_solution="pi = [0.5, 0.5]",
             rubric={"max_points": 10},
             checks=["matrix_inversion_checked"],
+            expected_revision=1,
         )
         assert val_res["validation_state"] == "validated"
 
@@ -275,6 +281,7 @@ def test_defect4_close_evidence_and_assistance_bypasses(temp_workspace):
             reference_solution="Var(X) = 2.92",
             rubric={"max_points": 10},
             checks=["checked"],
+            expected_revision=1,
         )
 
         att = core.start_attempt("prob-d4", ex["exercise_version_id"])["data"]
@@ -551,6 +558,7 @@ def test_defect_codex_2_subpart_assistance_bypass_prevention(temp_workspace):
             reference_solution="0.4 and 0.8",
             rubric={"max_points": 10},
             checks=["checked"],
+            expected_revision=1,
         )
 
         att = core.start_attempt("prob-c2", ex["exercise_version_id"])["data"]
@@ -628,6 +636,7 @@ def test_defect_codex_3_assessment_scoring_binding_and_idempotency(temp_workspac
             reference_solution="3.5",
             rubric={"max_points": 10},
             checks=["checked"],
+            expected_revision=1,
         )
 
         diag = core.create_assessment(
@@ -684,6 +693,7 @@ def test_defect_codex_4_recheck_question_validation_when_scoring(temp_workspace)
             reference_solution="2.5",
             rubric={"max_points": 10},
             checks=["checked"],
+            expected_revision=1,
         )
         ex_ver_id = val_ver["id"]
 
@@ -715,9 +725,14 @@ def test_defect_codex_4_recheck_question_validation_when_scoring(temp_workspace)
             reference_solution="2.5",
             rubric={"max_points": 10},
             checks=["re_checked"],
+            expected_revision=2,
         )
-        core.commit_evidence(att_id, evaluations=[{"topic_id": t["id"], "skill_id": "var_calc", "correct": True}])
-        score_res = core.record_assessment_item_score(diag_id, item_order=1, points_awarded=10.0, attempt_id=att_id)
+        # Start attempt for the updated exercise revision
+        item_att2 = core.start_assessment_item_attempt(diag_id, item_order=1)
+        att_id2 = item_att2["attempt"]["id"]
+        core.record_attempt_event(att_id2, expected_revision=1, event_type="work_submission", content="Var(X) = 2.5")
+        core.commit_evidence(att_id2, evaluations=[{"topic_id": t["id"], "skill_id": "var_calc", "correct": True}])
+        score_res = core.record_assessment_item_score(diag_id, item_order=1, points_awarded=10.0, attempt_id=att_id2)
         assert score_res["points_awarded"] == 10.0
     finally:
         core.close()
@@ -742,6 +757,7 @@ def test_defect_codex_5_exercise_validation_atomic_checks_and_snapshots(temp_wor
                 reference_solution="1.0",
                 rubric={"max_points": 5},
                 checks={"syntax_check": True, "math_check": False},
+                expected_revision=1,
             )
 
         # Stored content must be completely unchanged in DB
@@ -756,6 +772,7 @@ def test_defect_codex_5_exercise_validation_atomic_checks_and_snapshots(temp_wor
             reference_solution="1.0",
             rubric={"max_points": 5},
             checks={"syntax_check": True, "math_check": True},
+            expected_revision=1,
         )
         assert val_ver["validation_state"] == "validated"
 
@@ -765,6 +782,7 @@ def test_defect_codex_5_exercise_validation_atomic_checks_and_snapshots(temp_wor
             reference_solution="P(S) is identically 1.0 by axiom",
             rubric={"max_points": 5},
             checks=["verified_axioms"],
+            expected_revision=1,
         )
         ver_after = core.exercise_repo.get_exercise_version(ver_id)
         assert len(ver_after.revision_history) >= 1
@@ -798,6 +816,7 @@ def test_defect_codex_6_topic_state_recomputation_from_invalidated_evidence(temp
             reference_solution="Non-negativity, unit measure, countable additivity",
             rubric={"max_points": 10},
             checks=["checked"],
+            expected_revision=1,
         )
 
         att = core.start_attempt("prob-c6", ex_ver_id)["data"]
@@ -879,6 +898,7 @@ def test_defect_codex_8_assessment_coverage_separation(temp_workspace):
             reference_solution="0.5",
             rubric={"max_points": 10},
             checks=["checked"],
+            expected_revision=1,
         )
         for _ in range(2):
             att = core.start_attempt("prob-c8", ex_bayes["exercise_version_id"])["data"]
@@ -892,6 +912,7 @@ def test_defect_codex_8_assessment_coverage_separation(temp_workspace):
             reference_solution="3.5",
             rubric={"max_points": 10},
             checks=["checked"],
+            expected_revision=1,
         )
 
         diag = core.create_assessment(

@@ -6,7 +6,14 @@ from typing import Any, Dict, List, Optional
 import uuid
 
 from ..errors import CourseNotFoundError, CrossCourseViolationError, UnvalidatedQuestionError, ValidationError
-from ..models import Assessment, AssessmentItem, ExerciseVersion, utc_now_iso
+from ..models import (
+    Assessment,
+    AssessmentItem,
+    EVALUATED_DEMONSTRATED_LEVELS,
+    ExerciseVersion,
+    OBSERVATION_DEMONSTRATED_LEVELS,
+    utc_now_iso,
+)
 from ..storage.db import atomic_transaction
 from ..storage.repositories import (
     AssessmentRepository,
@@ -15,6 +22,7 @@ from ..storage.repositories import (
     EvidenceRepository,
     ExerciseRepository,
     TopicRepository,
+    compute_exercise_version_hash,
 )
 from ..learning.service import LearningService
 
@@ -148,10 +156,23 @@ class DiagnosticService:
                     details={"reason": "Cannot start assessment item attempt for an exercise version that is pending review or unvalidated."},
                 )
 
+            current_rev = len(ex_ver.revision_history) + 1
+            current_hash = compute_exercise_version_hash(
+                ex_ver.question_text,
+                ex_ver.reference_solution,
+                ex_ver.rubric,
+                ex_ver.subparts,
+            )
+
             # Handle existing linked attempt (retry / resume / idempotency)
             if item.attempt_id:
                 existing_attempt = self.attempt_repo.get_attempt(item.attempt_id)
-                if existing_attempt and existing_attempt.learner_id == learner_id:
+                if (
+                    existing_attempt
+                    and existing_attempt.learner_id == learner_id
+                    and (existing_attempt.exercise_revision is None or existing_attempt.exercise_revision == current_rev)
+                    and (existing_attempt.exercise_content_hash is None or existing_attempt.exercise_content_hash == current_hash)
+                ):
                     return {
                         "assessment_id": assessment_id,
                         "item_order": item_order,
@@ -218,8 +239,14 @@ class DiagnosticService:
             if attempt.mode != "diagnostic":
                 raise ValidationError(f"Attempt '{attempt_id}' has mode '{attempt.mode}', expected 'diagnostic'.")
 
-            # Check learner ownership
-            resolved_learner = (learner_id.strip() if learner_id else None) or attempt.learner_id
+            # Defect 6: Check learner ownership - caller-supplied learner is an assertion, not an override
+            if learner_id is not None:
+                cleaned_caller_learner = learner_id.strip()
+                if cleaned_caller_learner != attempt.learner_id:
+                    raise ValidationError(
+                        f"Caller-supplied learner '{cleaned_caller_learner}' does not match attempt owner '{attempt.learner_id}'."
+                    )
+            resolved_learner = attempt.learner_id
             if assessment.learner_id and assessment.learner_id != resolved_learner:
                 raise ValidationError(f"Learner mismatch: assessment '{assessment.learner_id}' vs attempt '{resolved_learner}'.")
             if item.learner_id and item.learner_id != resolved_learner:
@@ -379,6 +406,25 @@ class DiagnosticService:
                     details={"reason": "Cannot record assessment score for an exercise version that is not validated."},
                 )
 
+            # Defect 2: Educational identity check against current exercise version
+            current_rev = len(ex_ver.revision_history) + 1
+            current_hash = compute_exercise_version_hash(
+                ex_ver.question_text,
+                ex_ver.reference_solution,
+                ex_ver.rubric,
+                ex_ver.subparts,
+            )
+
+            if attempt.exercise_revision is not None and attempt.exercise_revision != current_rev:
+                raise ValidationError(
+                    f"Attempt '{linked_attempt_id}' was performed on exercise revision {attempt.exercise_revision}, "
+                    f"which does not match current revision {current_rev}."
+                )
+            if attempt.exercise_content_hash is not None and attempt.exercise_content_hash != current_hash:
+                raise ValidationError(
+                    f"Attempt '{linked_attempt_id}' content hash does not match current exercise version content hash."
+                )
+
             # Require committed work submission
             events = self.attempt_repo.list_events(linked_attempt_id)
             work_submissions = [e for e in events if e.event_type == "work_submission" and e.content.strip()]
@@ -388,7 +434,7 @@ class DiagnosticService:
                     "Cannot award score without submitted learner work."
                 )
 
-            # Defect 1: Authoritative active evidence check INSIDE transaction
+            # Defect 1 & Defect 2: Authoritative active evaluated evidence check INSIDE transaction
             active_evidence = self.evidence_repo.list_evidence(
                 course_id=assessment.course_id,
                 attempt_id=linked_attempt_id,
@@ -397,14 +443,65 @@ class DiagnosticService:
             submission_event_ids = {ws.id for ws in work_submissions}
             valid_evidence = [e for e in active_evidence if e.event_id in submission_event_ids]
 
-            # Defect A: Every confirmed score (including zero) requires active evaluated evidence
-            if not valid_evidence:
+            # Defect 1: Observation/unassessed evidence cannot support confirmed scores
+            observation_evs = [e for e in valid_evidence if e.demonstrated_level in OBSERVATION_DEMONSTRATED_LEVELS]
+            if observation_evs:
                 raise ValidationError(
-                    f"Attempt '{linked_attempt_id}' has no active evaluated evidence linked to committed work submissions. "
-                    "Cannot award score without valid active evidence."
+                    f"Attempt '{linked_attempt_id}' has evidence with unassessed/observation-only level: "
+                    f"{[e.demonstrated_level for e in observation_evs]}. Confirmed scores cannot be supported by unassessed work."
                 )
 
-            ev_ids = [e.id for e in valid_evidence]
+            # Defect A: Every confirmed score (including zero) requires active evaluated evidence
+            evaluated_evidence = [e for e in valid_evidence if e.demonstrated_level in EVALUATED_DEMONSTRATED_LEVELS]
+            if not evaluated_evidence:
+                raise ValidationError(
+                    f"Attempt '{linked_attempt_id}' has no active evaluated evidence linked to committed work submissions. "
+                    "Cannot award score without valid active evaluated evidence."
+                )
+
+            for ev in evaluated_evidence:
+                if ev.exercise_revision is not None and ev.exercise_revision != current_rev:
+                    raise ValidationError(
+                        f"Evidence '{ev.id}' is from outdated exercise revision {ev.exercise_revision}, "
+                        f"expected current revision {current_rev}."
+                    )
+                if ev.exercise_content_hash is not None and ev.exercise_content_hash != current_hash:
+                    raise ValidationError(
+                        f"Evidence '{ev.id}' content hash does not match current exercise version content hash."
+                    )
+
+            # Defect 1: Score vs evaluated evidence alignment
+            has_positive_evidence = any(
+                e.demonstrated_level in ("independent_mastery", "assisted_success", "partial_progress")
+                for e in evaluated_evidence
+            )
+            if points_awarded > 0 and not has_positive_evidence:
+                raise ValidationError(
+                    f"Cannot award positive points ({points_awarded}) when all evaluated evidence is incorrect."
+                )
+
+            if points_awarded == 0 and all(e.demonstrated_level == "independent_mastery" for e in evaluated_evidence):
+                raise ValidationError(
+                    "Cannot award zero points when all evaluated evidence demonstrates independent mastery."
+                )
+
+            # Full credit requires all declared subparts evaluated
+            if points_awarded == item.max_points and ex_ver.subparts:
+                if isinstance(ex_ver.subparts, dict):
+                    declared_subparts = set(ex_ver.subparts.keys())
+                elif isinstance(ex_ver.subparts, list):
+                    declared_subparts = set(str(k) for k in ex_ver.subparts)
+                else:
+                    declared_subparts = set()
+                if declared_subparts:
+                    evaluated_subparts = {e.subpart_key for e in evaluated_evidence if e.subpart_key}
+                    missing_subparts = declared_subparts - evaluated_subparts
+                    if missing_subparts:
+                        raise ValidationError(
+                            f"Cannot award full credit ({points_awarded}/{item.max_points}): declared subparts missing evaluated evidence: {sorted(missing_subparts)}."
+                        )
+
+            ev_ids = [e.id for e in evaluated_evidence]
 
             # Idempotent retry check
             if (
@@ -543,7 +640,9 @@ class DiagnosticService:
                             has_sol_before = True
 
                     unique_levels = set(subpart_levels)
-                    if unique_levels == {"independent_mastery"}:
+                    if not unique_levels or all(lvl in OBSERVATION_DEMONSTRATED_LEVELS for lvl in unique_levels):
+                        classification = "unassessed"
+                    elif unique_levels == {"independent_mastery"}:
                         classification = "independent"
                     elif unique_levels == {"assisted_success"}:
                         classification = "solution_revealed" if has_sol_before else "assisted"
@@ -553,8 +652,12 @@ class DiagnosticService:
                         classification = "partial_progress"
                     elif unique_levels == {"incorrect"}:
                         classification = "incorrect"
+                    elif "assisted_success" in unique_levels:
+                        classification = "solution_revealed" if has_sol_before else "assisted"
+                    elif any(lvl in EVALUATED_DEMONSTRATED_LEVELS for lvl in unique_levels):
+                        classification = "mixed"
                     else:
-                        classification = "assisted"
+                        classification = "unassessed"
                 else:
                     work_events = [e for e in events if e.event_type == "work_submission" and e.content.strip()]
                     if work_events:

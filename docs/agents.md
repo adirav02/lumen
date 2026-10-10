@@ -34,8 +34,9 @@ This package currently contains planning and instruction files, not an implement
 
 In diagnostics:
 - Use the established start/link/score workflow: start the item attempt (`start_assessment_item_attempt`), record the work submission and commit evaluated evidence, then record the score (`record_assessment_item_score`). Never attempt to score unlinked items or external practice attempts.
-- Every confirmed score, including zero, strictly requires applicable completed active evaluated evidence grounded in submitted work. Unevaluated work remains pending; recording a score on unevaluated work is rejected.
-- If explicit relinking is needed, use `link_assessment_item_attempt`. Reaffirming an unchanged attempt link is an idempotent no-op preserving points, evidence, history, and completion status. Linking a genuinely different attempt invalidates previous scores, reopens the assessment, and logs an audit trail.
+- Every confirmed score, including zero, strictly requires applicable completed active evaluated evidence grounded in submitted work. Observation levels (`unassessed`, `pending`, `uncertain`, `unreadable`) cannot support confirmed scores. Unevaluated work remains pending; recording a score on unevaluated work is rejected. Positive score requires positive evaluated evidence; zero score requires evaluated incorrect work; full credit requires all declared subparts evaluated. Reporting never classifies unassessed work as assisted.
+- Submissions cannot be evaluated against modified/replaced exercise content, and assessment items cannot be scored using evidence from outdated exercise revisions. Persistent revision and content hash identity (Migration 006) must match between attempt, evidence, and current exercise version.
+- If explicit relinking is needed, use `link_assessment_item_attempt`. Caller-supplied `learner_id` is an assertion to verify against `attempt.learner_id`, never an override. Reaffirming an unchanged attempt link is an idempotent no-op preserving points, evidence, history, and completion status. Linking a genuinely different attempt invalidates previous scores, reopens the assessment, and logs an audit trail.
 - Reuse stable request IDs across retries and respect expected revision counters.
 - Treat pending or unvalidated work as pending review; never treat pending items as validated or scored.
 - Report saving to the learner only after confirmed database persistence.
@@ -45,11 +46,12 @@ In diagnostics:
 
 - Build the current milestone in `plan.md`, with the smallest complete path through its acceptance checks. Do not silently implement deferred scope.
 - Keep storage, retrieval, idempotency, provenance, and assessment computation in the shared core. Adapters translate host execution and file/image access only.
-- Make database changes through versioned migrations. Back up before a migration with material data risk; enable foreign keys on every connection and test restore. Detect and quarantine legacy constraint conflicts (e.g. duplicate attempt links in schema v4) to `backup_v4_assessment_items` and `legacy_duplicate_attempt_links` before unique index creation.
+- Make database changes through versioned migrations (v1–v6). Back up before a migration with material data risk; enable foreign keys on every connection and test restore. Detect and quarantine legacy constraint conflicts (e.g. duplicate attempt links in schema v4) to `backup_v4_assessment_items` and `legacy_duplicate_attempt_links` before unique index creation.
 - Do not hold a database write transaction during model calls or file extraction. Do not sync a live database through Git or shared network folders.
 - Protect authoritative checks and writes together within atomic immediate transactions (`atomic_transaction(self.con)`).
-- Validate verification checks with strict schema: accept only boolean `True` or passing structured check state enum; reject ambiguous strings ('false', 'failed', 'pending'), numbers, and containers.
-- Enforce exact revision and content identity checking on exercise validation (`validate_exercise_version` with `expected_revision` and expected text/solution/rubric) and updates to reject stale concurrent modifications.
+- Validate verification checks with strict schema: allowed keys `{"status", "state", "reason", "notes", "metadata", "score"}`; reject conflicting `status` and `state`; disallow duplicate check names (case-insensitive); reject failing or pending statuses (`failed`, `falsified`, `rejected`, `pending`, `unknown`).
+- Enforce mandatory caller-side identity on exercise validation (`validate_exercise_version` requires positive integer `expected_revision` or non-empty `expected_content_hash`) and atomic provenance snapshots recording checked revision and content hash.
+- Sandbox all backup and restore paths: `_safe_resolve_staged_path` strictly rejects Zip Slip, symlinks, absolute paths, and traversal sequences (`..`) across archives, manifests, and database files.
 - Release every acquired lock, connection, and file descriptor immediately upon initialization failure to ensure clean restore and recovery.
 - Use indexed, scoped queries and small mutation payloads. Log usage metadata where available without repeatedly summarizing the course.
 - Add meaningful tests for provenance, assistance ordering, corrections, duplicates, cross-course writes, interrupted commits, source version changes, and adapter conformance.

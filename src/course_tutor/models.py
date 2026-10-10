@@ -219,6 +219,23 @@ class ExerciseVersion:
         return asdict(self)
 
 
+EVALUATED_DEMONSTRATED_LEVELS = frozenset({
+    "independent_mastery",
+    "assisted_success",
+    "partial_progress",
+    "incorrect",
+})
+
+OBSERVATION_DEMONSTRATED_LEVELS = frozenset({
+    "unassessed",
+    "pending",
+    "uncertain",
+    "unreadable",
+})
+
+ALLOWED_DEMONSTRATED_LEVELS = EVALUATED_DEMONSTRATED_LEVELS | OBSERVATION_DEMONSTRATED_LEVELS
+
+
 @dataclass
 class Attempt:
     id: str
@@ -228,6 +245,8 @@ class Attempt:
     mode: str = "practice"  # 'practice', 'diagnostic'
     status: str = "open"  # 'open', 'paused', 'completed'
     current_revision: int = 1
+    exercise_revision: Optional[int] = None
+    exercise_content_hash: Optional[str] = None
     started_at: str = field(default_factory=utc_now_iso)
     updated_at: str = field(default_factory=utc_now_iso)
     completed_at: Optional[str] = None
@@ -262,12 +281,14 @@ class EvidenceRecord:
     topic_id: str
     skill_id: str
     subpart_key: str
-    demonstrated_level: str  # 'independent_mastery', 'assisted_success', 'partial_progress', 'incorrect', 'unassessed'
+    demonstrated_level: str  # 'independent_mastery', 'assisted_success', 'partial_progress', 'incorrect', 'unassessed', etc.
     error_category: Optional[str] = None  # 'conceptual', 'method_selection', 'counting', 'algebra', 'arithmetic', None
     rationale: str = ""
-    status: str = "active"  # 'active', 'retracted', 'superseded'
+    status: str = "active"  # 'active', 'retracted', 'superseded', 'pending_review'
     parent_evidence_id: Optional[str] = None
     correction_reason: Optional[str] = None
+    exercise_revision: Optional[int] = None
+    exercise_content_hash: Optional[str] = None
     created_at: str = field(default_factory=utc_now_iso)
     updated_at: str = field(default_factory=utc_now_iso)
 

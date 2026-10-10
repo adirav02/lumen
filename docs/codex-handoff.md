@@ -2,7 +2,7 @@
 
 **Date**: 2026-10-10  
 **Repository**: `lumen`  
-**Git Base**: Final verification pass following commit `f7fc924507cfc3378c95b405083d871c69d89758`  
+**Git Base**: Fifth-round correctness and reliability pass following commit `5beff2133789a0d7c21eebacc6a26e0290f8115c`  
 **Author / Implementer**: Antigravity Assistant  
 **Target Recipient**: OpenAI Codex (and continuing engineering agents)
 
@@ -10,7 +10,43 @@
 
 ## 1. Executive Summary & Verified Defect Resolutions
 
-In response to Codex's independent review of baseline commit `f7fc924507cfc3378c95b405083d871c69d89758`, all 4 identified defects (Defect A, Defect B, Defect C, Defect D) and related lifecycle boundary conditions have been repaired and verified across 77 automated tests (including 10 dedicated verification tests in `tests/test_final_verification.py`), the CLI capability inspector, and the synthetic probability demo.
+In response to Codex's independent review of baseline commit `5beff2133789a0d7c21eebacc6a26e0290f8115c`, all 9 confirmed defects and related invariants have been repaired, audited, and verified across 87 automated tests (including 10 dedicated regression tests in `tests/test_nine_defect_repairs.py`), the CLI capability inspector, and the synthetic probability demo. All 87 automated tests pass on Python 3.12.
+
+### Fifth-Round Verified Defect Repairs Implemented
+
+1. **Defect 1: Enforce Evidence-Level Schema & Disallow Observation Levels from Supporting Confirmed Scores**:
+   - `models.py`: Partitioned demonstrated levels into `EVALUATED_DEMONSTRATED_LEVELS` (`{"mastered", "proficient", "developing", "incorrect"}`) and `OBSERVATION_DEMONSTRATED_LEVELS` (`{"unassessed", "pending", "uncertain", "unreadable"}`).
+   - `diagnostic.py`: `record_assessment_item_score` rejects observation levels (`unassessed`, `pending`, `uncertain`, `unreadable`) with `ValidationError`. Confirmed scores require evaluated active evidence.
+   - Positive score requires positive evaluated evidence (`"mastered"`, `"proficient"`, or `"developing"`). Zero score requires evaluated incorrect work (`"incorrect"`). Full credit requires all declared subparts evaluated.
+   - `get_progress` classifies items with observation levels or unassessed attempts as `"unassessed"`, never as `"assisted"`.
+
+2. **Defect 2: Old Submissions Reused After Exercise Replacement**:
+   - Schema Migration 006 added `exercise_revision` and `exercise_content_hash` columns to `attempts` and `evidence` tables.
+   - `LearningService`: `start_attempt` records current exercise revision and hash. `record_attempt_event` attaches revision and hash to `work_submission` metadata and updates attempt. `commit_evidence` verifies submission event's revision and content hash match current exercise version, rejecting outdated submissions.
+   - `diagnostic.py`: `start_assessment_item_attempt` detects outdated exercise revisions or content hashes on existing attempts and starts a fresh attempt on the new revision instead of resuming. `record_assessment_item_score` verifies attempt and evidence match current exercise revision and hash.
+
+3. **Defect 3: Exact-Revision Validation Bypassed by Omitting Caller-Side Identity**:
+   - `repositories.py`: `validate_exercise_version` mandates caller-supplied `expected_revision` (strict positive integer, `int > 0` rejecting booleans) or `expected_content_hash`. Omitting caller-side identity or providing invalid types/values raises `ValidationError`.
+
+4. **Defect 4: Validation Provenance Recorded Previous Content Hash and Revision**:
+   - `repositories.py`: `validate_exercise_version` computes the candidate's canonical content hash and revision after applying updates, records the final attested revision and content hash in the provenance payload, and atomically writes validation status, revision snapshot, and provenance in the same transaction.
+
+5. **Defect 5: Contradictory Structured Checks Validated Questions**:
+   - `repositories.py`: `validate_exercise_version` enforces strict verification check schema: allowed keys are strictly `{"status", "state", "reason", "notes", "metadata", "score"}`. Rejects contradictory `status` and `state` combinations, duplicate check names, non-finite scores, and non-passing statuses (`failed`, `pending`, `error`).
+
+6. **Defect 6: Caller-Supplied `learner_id` Bypassed Attempt Ownership in Linking**:
+   - `diagnostic.py`: In `link_assessment_item_attempt`, caller-supplied `learner_id` is treated as an assertion to verify against `attempt.learner_id`, not an override. If `caller_learner_id != attempt.learner_id`, `ValidationError` is raised, preventing cross-learner attempt linkage.
+
+7. **Defect 7: Repeated Legacy Repair Corrupted Completed Assessment State**:
+   - `migrations.py`: Rewrote `repair_legacy_duplicate_links`. Reaffirming an unchanged link (`existing_item.attempt_id == chosen_attempt_id`) is an idempotent no-op with `reaffirmed=True` that preserves awarded points, evidence bindings, audit history, and completion status. If the link actually changes, routes through validated relink logic with automatic rollback on error.
+
+8. **Defect 8: CLI `commit_evidence` Omitted `submission_event_id` & CLI Payload Validation**:
+   - `cli.py`: Forwards `--submission-event-id` in `commit_evidence`. Detects conflicting `--request-id` / `--course-id` against payload parameters. Rejects non-object JSON payloads with exit code 1. Passes `req_id` uniformly to all assessment CLI commands.
+
+9. **Defect 9: Restore Accepted Paths Outside the Backup Archive**:
+   - `restore.py`: Implemented `_safe_resolve_staged_path` ensuring resolved target paths remain inside staging directory.
+   - Pre-extraction zip verification inspects every zip member, rejecting Zip Slip, path traversal (`..`), absolute paths, and symlinks/hardlinks before any files are extracted.
+   - Handles manifest database metadata safely as dictionary or string. Safely resolves manifest files and restored database `source_versions`.
 
 ### Fourth-Round Final Verification Defect Fixes Implemented
 
@@ -69,9 +105,9 @@ python3 -m venv .venv
 .venv/bin/lumen capabilities
 # Output: {"status": "success", "data": {"contract_version": "1.0.0", "runtime": {"fts5_supported": true}, ...}}
 
-# 3. Full automated test suite (77/77 passed)
+# 3. Full automated test suite (87/87 passed)
 .venv/bin/pytest -v
-# Output: 77 passed in 2.76s
+# Output: 87 passed in 2.90s
 
 # 4. Standalone synthetic probability course demonstration
 .venv/bin/python demo.py
@@ -86,7 +122,18 @@ python3 -m venv .venv
 
 ## 3. Test Suite Breakdown
 
-All 77 automated test cases pass cleanly:
+All 87 automated test cases pass cleanly:
+- `tests/test_nine_defect_repairs.py` (10 tests):
+  - Defect 1: Enforce evidence-level schema; observation levels (`unassessed`, `pending`, `uncertain`, `unreadable`) cannot support confirmed scores; positive score requires positive evaluated evidence; zero score requires evaluated incorrect work; full credit requires all declared subparts evaluated; progress reporting never classifies unassessed work as assisted.
+  - Defect 2: Old submissions reused after exercise replacement. Persist educational revision and content hash identity on attempts and evidence (Migration 006); reject evaluating old submissions against changed exercise content; reject scoring assessment items using evidence from outdated exercise revisions; do not resume outdated attempts.
+  - Defect 3: Exact-revision validation bypassed by omitting caller-side identity. Mandatory `expected_revision` (strict positive int) or `expected_content_hash`; reject missing/malformed identity.
+  - Defect 4: Validation provenance recorded previous content hash and revision. Record final attested candidate revision and content hash in provenance; atomically commit snapshot, content, and provenance.
+  - Defect 5: Contradictory structured checks validated questions. Strict schema: allowed keys `{"status", "state", "reason", "notes", "metadata", "score"}`; reject conflicting `status` and `state`; disallow duplicate check names; reject failing/pending statuses.
+  - Defect 6: Caller-supplied `learner_id` bypassed attempt ownership in linking. Caller-supplied `learner_id` is an assertion to verify against `attempt.learner_id`, not an override; verify agreement across attempt, item, assessment, and caller.
+  - Defect 7: Repeated legacy repair corrupted completed assessment state. Reaffirming unchanged link is an idempotent no-op preserving points, evidence, history, and completion status; changed link routes through validated relink logic with rollback.
+  - Defect 8: CLI `commit_evidence` omitted `submission_event_id`. Forward `submission_event_id`; audit CLI operations against API signatures; detect conflicting `--request-id` / `--course-id` vs payload; reject non-object JSON payloads with exit code 1.
+  - Defect 9: Restore accepted paths outside the backup. Treat archive, manifest, and database paths as untrusted input; safe path resolution `_safe_resolve_staged_path`; Zip member validation rejecting Zip Slip, symlinks, absolute paths, and traversal `..`.
+  - Migration 006: Schema upgrade populates `exercise_revision` and `exercise_content_hash` columns and preserves existing attempt and evidence data.
 - `tests/test_final_verification.py` (10 tests):
   - Defect A: Zero score strictly requires active evaluated evidence; unevaluated work stays pending.
   - Defect A: Rollback state preservation on rejected scores.

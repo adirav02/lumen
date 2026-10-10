@@ -63,6 +63,7 @@ def test_defect_a_zero_score_requires_evaluated_evidence(temp_workspace):
             reference_solution="0.25",
             rubric={"criteria": "correct posterior", "max_points": 10},
             checks={"math": True},
+            expected_revision=1,
         )
 
         diag = core.create_assessment(
@@ -143,6 +144,7 @@ def test_defect_a_rejected_score_preserves_prior_state(temp_workspace):
             reference_solution="T -> T",
             rubric={"criteria": "truth table", "max_points": 10},
             checks={"proof": True},
+            expected_revision=1,
         )
         diag = core.create_assessment("prob-def-a2", "Exam", selected_exercise_version_ids=[v_id])["data"]
         diag_id = diag["assessment_id"]
@@ -212,6 +214,7 @@ def test_defect_b_validation_rejects_concurrently_edited_question(temp_workspace
                 reference_solution="2x",
                 rubric={"max_points": 10},
                 checks={"math": True},
+                expected_revision=2,
                 expected_question_text="Find derivative of x^2",
             )
 
@@ -296,6 +299,7 @@ def test_defect_c_reaffirming_link_preserves_score_and_completion(temp_workspace
             reference_solution="1.96",
             rubric={"max_points": 10},
             checks={"stat": True},
+            expected_revision=1,
         )
         diag = core.create_assessment("stat-c", "Exam", selected_exercise_version_ids=[v_id])["data"]
         diag_id = diag["assessment_id"]
@@ -494,7 +498,7 @@ def test_lifecycle_boundaries_item_order_and_learner_id(temp_workspace):
         core.create_course("Math", course_id="math-bound")
         ex = core.create_exercise("math-bound", "m1", "Add 1+1")
         v_id = ex["exercise_version_id"]
-        core.validate_exercise_version(v_id, reference_solution="2", rubric={"max_points": 10}, checks={"c": True})
+        core.validate_exercise_version(v_id, reference_solution="2", rubric={"max_points": 10}, checks={"c": True}, expected_revision=1)
         diag = core.create_assessment("math-bound", "Quiz", selected_exercise_version_ids=[v_id])["data"]
         diag_id = diag["assessment_id"]
 
@@ -530,11 +534,11 @@ def test_cross_course_and_duplicate_assessment_creation(temp_workspace):
         t_b = core.create_topic("course-b", name="Foreign Topic", slug="foreign")
         ex_b = core.create_exercise("course-b", "ex-b", "Question B")
         v_b = ex_b["exercise_version_id"]
-        core.validate_exercise_version(v_b, reference_solution="sol", rubric={"max_points": 10}, checks={"c": True})
+        core.validate_exercise_version(v_b, reference_solution="sol", rubric={"max_points": 10}, checks={"c": True}, expected_revision=1)
 
         ex_a = core.create_exercise("course-a", "ex-a", "Question A")
         v_a = ex_a["exercise_version_id"]
-        core.validate_exercise_version(v_a, reference_solution="sol", rubric={"max_points": 10}, checks={"c": True})
+        core.validate_exercise_version(v_a, reference_solution="sol", rubric={"max_points": 10}, checks={"c": True}, expected_revision=1)
 
         # 1. Blueprint topics belonging to another course -> CrossCourseViolationError
         with pytest.raises(CrossCourseViolationError):
@@ -559,7 +563,7 @@ def test_assistance_chronology_and_exposure_preservation(temp_workspace):
         t = core.create_topic("bio-chron", name="Genetics", slug="gen")
         ex = core.create_exercise("bio-chron", "g1", "Punnett square")
         v_id = ex["exercise_version_id"]
-        core.validate_exercise_version(v_id, reference_solution="3:1", rubric={"max_points": 10}, checks={"c": True})
+        core.validate_exercise_version(v_id, reference_solution="3:1", rubric={"max_points": 10}, checks={"c": True}, expected_revision=1)
         diag = core.create_assessment("bio-chron", "Exam", selected_exercise_version_ids=[v_id])["data"]
         diag_id = diag["assessment_id"]
 

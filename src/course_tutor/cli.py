@@ -13,16 +13,22 @@ from .errors import LumenError
 def parse_json_payload(raw_json: Optional[str]) -> Dict[str, Any]:
     if raw_json:
         try:
-            return json.loads(raw_json)
+            val = json.loads(raw_json)
         except json.JSONDecodeError as e:
             raise ValueError(f"Malformed JSON argument: {e}")
+        if not isinstance(val, dict):
+            raise ValueError(f"JSON input must be an object (dictionary), got {type(val).__name__}.")
+        return val
     if not sys.stdin.isatty():
         content = sys.stdin.read().strip()
         if content:
             try:
-                return json.loads(content)
+                val = json.loads(content)
             except json.JSONDecodeError as e:
                 raise ValueError(f"Malformed stdin JSON: {e}")
+            if not isinstance(val, dict):
+                raise ValueError(f"JSON input must be an object (dictionary), got {type(val).__name__}.")
+            return val
     return {}
 
 
@@ -78,6 +84,22 @@ def main(argv: Optional[List[str]] = None) -> None:
         else:
             core = LumenCore(ws_path)
             try:
+                if args.request_id and "request_id" in payload and payload["request_id"] != args.request_id:
+                    output_json({
+                        "status": "error",
+                        "error_code": "CONFLICTING_PARAMETERS",
+                        "message": f"Conflicting request ID: CLI option --request-id is '{args.request_id}', but JSON payload request_id is '{payload['request_id']}'.",
+                        "details": {"cli_request_id": args.request_id, "payload_request_id": payload["request_id"]},
+                    }, exit_code=1)
+
+                if args.course_id and "course_id" in payload and payload["course_id"] != args.course_id:
+                    output_json({
+                        "status": "error",
+                        "error_code": "CONFLICTING_PARAMETERS",
+                        "message": f"Conflicting course ID: CLI option --course-id is '{args.course_id}', but JSON payload course_id is '{payload['course_id']}'.",
+                        "details": {"cli_course_id": args.course_id, "payload_course_id": payload["course_id"]},
+                    }, exit_code=1)
+
                 req_id = args.request_id or payload.get("request_id")
                 cid = args.course_id or payload.get("course_id")
 
@@ -212,6 +234,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                         attempt_id=payload["attempt_id"],
                         evaluations=payload["evaluations"],
                         complete_attempt=payload.get("complete_attempt", False),
+                        submission_event_id=payload.get("submission_event_id"),
                         request_id=req_id,
                     )
                     output_json(res)
@@ -290,7 +313,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                         assessment_id=payload["assessment_id"],
                         item_order=payload["item_order"],
                         learner_id=payload.get("learner_id", "default_learner"),
-                        request_id=payload.get("request_id"),
+                        request_id=req_id,
                     )
                     if isinstance(res, dict) and "status" in res:
                         output_json(res)
@@ -303,7 +326,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                         item_order=payload["item_order"],
                         attempt_id=payload["attempt_id"],
                         learner_id=payload.get("learner_id"),
-                        request_id=payload.get("request_id"),
+                        request_id=req_id,
                     )
                     if isinstance(res, dict) and "status" in res:
                         output_json(res)
@@ -316,7 +339,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                         item_order=payload["item_order"],
                         points_awarded=payload["points_awarded"],
                         attempt_id=payload.get("attempt_id"),
-                        request_id=payload.get("request_id"),
+                        request_id=req_id,
                     )
                     if isinstance(res, dict) and "status" in res:
                         output_json(res)

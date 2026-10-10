@@ -305,12 +305,20 @@ MIGRATION_V5_SQL = """
 CREATE UNIQUE INDEX IF NOT EXISTS idx_assessment_items_unique_attempt ON assessment_items(attempt_id) WHERE attempt_id IS NOT NULL;
 """
 
+MIGRATION_V6_SQL = """
+ALTER TABLE attempts ADD COLUMN exercise_revision INTEGER;
+ALTER TABLE attempts ADD COLUMN exercise_content_hash TEXT;
+ALTER TABLE evidence ADD COLUMN exercise_revision INTEGER;
+ALTER TABLE evidence ADD COLUMN exercise_content_hash TEXT;
+"""
+
 MIGRATIONS: List[Tuple[int, str, str]] = [
     (1, "Initial schema for Lumen core with FTS5", MIGRATION_V1_SQL),
     (2, "Persist complete extracted sections and source locators", MIGRATION_V2_SQL),
     (3, "Track assessment item score status, audit history, and supporting evidence", MIGRATION_V3_SQL),
     (4, "Track learner ownership on assessments and revision history on exercise versions", MIGRATION_V4_SQL),
     (5, "Enforce unique non-null attempt-to-item link in assessment_items", MIGRATION_V5_SQL),
+    (6, "Educational content identity tracking on attempts and evidence", MIGRATION_V6_SQL),
 ]
 
 
@@ -484,7 +492,12 @@ def repair_legacy_duplicate_links(
     con: sqlite3.Connection,
     resolved_assignments: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
-    """Actionable repair path for quarantined legacy duplicate attempt links."""
+    """Actionable repair path for quarantined legacy duplicate attempt links.
+
+    Validates course, exercise version, mode, learner ownership, and attempt exclusivity.
+    Reaffirming an unchanged link is an idempotent no-op preserving points, evidence, history, and completion.
+    A genuinely changed link invalidates prior scores, updates history, and reopens the assessment.
+    """
     with atomic_transaction(con):
         table_exists = con.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='legacy_duplicate_attempt_links'"
@@ -504,28 +517,106 @@ def repair_legacy_duplicate_links(
                     raise ValidationError(
                         f"Attempt '{att_id}' and item '{item_id}' not found in quarantined legacy duplicate links."
                     )
+
+                it = con.execute("SELECT * FROM assessment_items WHERE id = ?", (item_id,)).fetchone()
+                if not it:
+                    raise ValidationError(f"Assessment item '{item_id}' not found.")
+
+                att = con.execute("SELECT * FROM attempts WHERE id = ?", (att_id,)).fetchone()
+                if not att:
+                    raise ValidationError(f"Attempt '{att_id}' not found.")
+
+                ass = con.execute("SELECT * FROM assessments WHERE id = ?", (it["assessment_id"],)).fetchone()
+                if not ass:
+                    raise ValidationError(f"Assessment '{it['assessment_id']}' not found.")
+
+                if att["course_id"] != ass["course_id"]:
+                    raise ValidationError(
+                        f"Attempt '{att_id}' course '{att['course_id']}' does not match assessment course '{ass['course_id']}'."
+                    )
+                if att["exercise_version_id"] != it["exercise_version_id"]:
+                    raise ValidationError(
+                        f"Attempt '{att_id}' exercise version '{att['exercise_version_id']}' does not match assessment item '{it['exercise_version_id']}'."
+                    )
+                if att["mode"] != "diagnostic":
+                    raise ValidationError(
+                        f"Attempt '{att_id}' has mode '{att['mode']}', expected 'diagnostic'."
+                    )
+                if ass["learner_id"] and ass["learner_id"] != att["learner_id"]:
+                    raise ValidationError(
+                        f"Learner mismatch: assessment '{ass['learner_id']}' vs attempt '{att['learner_id']}'."
+                    )
+                if it["learner_id"] and it["learner_id"] != att["learner_id"]:
+                    raise ValidationError(
+                        f"Learner mismatch: item '{it['learner_id']}' vs attempt '{att['learner_id']}'."
+                    )
+
+                other = con.execute(
+                    "SELECT id FROM assessment_items WHERE attempt_id = ? AND id != ?",
+                    (att_id, item_id),
+                ).fetchone()
+                if other:
+                    raise ValidationError(
+                        f"Attempt '{att_id}' is already linked to another assessment item ({other['id']})."
+                    )
+
+                # Defect 7 / Defect C: Reaffirming an unchanged link is an idempotent no-op!
+                # Preserves scores, evidence, history, ownership, and completion.
+                if it["attempt_id"] == att_id:
+                    resolved_list.append({"attempt_id": att_id, "assessment_item_id": item_id, "reaffirmed": True})
+                    continue
+
                 # Read item score history
-                it = con.execute("SELECT score_history_json FROM assessment_items WHERE id = ?", (item_id,)).fetchone()
                 try:
-                    hist = json.loads(it[0]) if it and it[0] else []
+                    hist = json.loads(it["score_history_json"] or "[]")
                 except Exception:
                     hist = []
-                hist.append({
-                    "action": "resolved_legacy_duplicate_link",
-                    "attempt_id": att_id,
-                    "reason": f"Explicit legacy duplicate link resolution assigning attempt to item {item_id}",
-                    "recorded_at": now,
-                })
-                con.execute(
-                    """
-                    UPDATE assessment_items SET
-                        attempt_id = ?,
-                        score_status = 'pending_review',
-                        score_history_json = ?
-                    WHERE id = ?
-                    """,
-                    (att_id, json.dumps(hist), item_id),
-                )
+
+                if it["points_awarded"] is not None:
+                    hist.append({
+                        "action": "relinked_to_pending_review",
+                        "previous_points": it["points_awarded"],
+                        "points_awarded": None,
+                        "attempt_id": att_id,
+                        "previous_attempt_id": it["attempt_id"],
+                        "reason": f"Item relinked via legacy repair from {it['attempt_id']} to {att_id}",
+                        "recorded_at": now,
+                    })
+                    con.execute(
+                        """
+                        UPDATE assessment_items SET
+                            attempt_id = ?,
+                            learner_id = ?,
+                            points_awarded = NULL,
+                            score_status = 'pending_review',
+                            evidence_ids_json = '[]',
+                            score_history_json = ?
+                        WHERE id = ?
+                        """,
+                        (att_id, att["learner_id"], json.dumps(hist), item_id),
+                    )
+                    con.execute(
+                        "UPDATE assessments SET status = 'open' WHERE id = ?",
+                        (it["assessment_id"],),
+                    )
+                else:
+                    hist.append({
+                        "action": "resolved_legacy_duplicate_link",
+                        "attempt_id": att_id,
+                        "reason": f"Explicit legacy duplicate link resolution assigning attempt to item {item_id}",
+                        "recorded_at": now,
+                    })
+                    con.execute(
+                        """
+                        UPDATE assessment_items SET
+                            attempt_id = ?,
+                            learner_id = ?,
+                            score_history_json = ?
+                        WHERE id = ?
+                        """,
+                        (att_id, att["learner_id"], json.dumps(hist), item_id),
+                    )
+
                 con.execute(
                     """
                     UPDATE legacy_duplicate_attempt_links SET
@@ -544,7 +635,7 @@ def repair_legacy_duplicate_links(
                     """,
                     (f"Unlinked because attempt was assigned to {item_id}", att_id, item_id),
                 )
-                resolved_list.append({"attempt_id": att_id, "assessment_item_id": item_id})
+                resolved_list.append({"attempt_id": att_id, "assessment_item_id": item_id, "reaffirmed": False})
 
         remaining = con.execute(
             "SELECT attempt_id, assessment_item_id FROM legacy_duplicate_attempt_links WHERE resolution_status = 'quarantined'"

@@ -36,6 +36,39 @@ def _check_db_not_locked(db_path: Path) -> None:
         pass
 
 
+def _safe_resolve_staged_path(base_dir: Path, untrusted_path: Union[str, Path, None]) -> Path:
+    """Safely resolve an untrusted relative path against base_dir.
+
+    Rejects None/empty paths, absolute paths, traversal (..) components,
+    and any paths that resolve outside base_dir.
+    """
+    if not untrusted_path:
+        raise RestoreIntegrityError("Empty or missing path in backup metadata.")
+
+    p_str = str(untrusted_path).replace("\\", "/")
+    if p_str.startswith("/") or Path(p_str).is_absolute():
+        raise RestoreIntegrityError(
+            f"Security violation: absolute path '{untrusted_path}' is not permitted in backup."
+        )
+
+    p = Path(p_str)
+    for part in p.parts:
+        if part == ".." or part.startswith("/"):
+            raise RestoreIntegrityError(
+                f"Security violation: path traversal '{untrusted_path}' is not permitted in backup."
+            )
+
+    resolved_base = base_dir.resolve()
+    target = (resolved_base / p).resolve()
+    try:
+        target.relative_to(resolved_base)
+    except ValueError:
+        raise RestoreIntegrityError(
+            f"Security violation: path '{untrusted_path}' resolves outside staging directory."
+        )
+    return target
+
+
 def _do_restore(
     backup_src: Path,
     target_ws: Path,
@@ -49,13 +82,42 @@ def _do_restore(
 
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
+        resolved_temp = temp_path.resolve()
 
-        # 1. Extract if zip, or copy if directory
+        # 1. Extract if zip, or copy if directory with strict validation (Defect 9)
         if backup_src.is_file() and zipfile.is_zipfile(backup_src):
             with zipfile.ZipFile(backup_src, "r") as zipf:
+                for member in zipf.infolist():
+                    m_name = member.filename.replace("\\", "/")
+                    if m_name.startswith("/") or Path(m_name).is_absolute():
+                        raise RestoreIntegrityError(
+                            f"Security violation: archive member '{member.filename}' has absolute path."
+                        )
+                    for part in Path(m_name).parts:
+                        if part == "..":
+                            raise RestoreIntegrityError(
+                                f"Security violation: archive member '{member.filename}' contains traversal sequence."
+                            )
+                    # Reject symlinks in zip archive
+                    if (member.external_attr >> 16) & 0o170000 == 0o120000:
+                        raise RestoreIntegrityError(
+                            f"Security violation: archive member '{member.filename}' is a symbolic link."
+                        )
+                    dest = (resolved_temp / m_name).resolve()
+                    try:
+                        dest.relative_to(resolved_temp)
+                    except ValueError:
+                        raise RestoreIntegrityError(
+                            f"Security violation: archive member '{member.filename}' extracts outside sandbox."
+                        )
                 zipf.extractall(temp_path)
         elif backup_src.is_dir():
-            shutil.copytree(backup_src, temp_path, dirs_exist_ok=True)
+            for p in backup_src.rglob("*"):
+                if p.is_symlink():
+                    raise RestoreIntegrityError(
+                        f"Security violation: backup source contains symbolic link '{p}'."
+                    )
+            shutil.copytree(backup_src, temp_path, dirs_exist_ok=True, symlinks=False)
         else:
             raise RestoreIntegrityError(f"Backup '{backup_src}' is neither a zip file nor a valid directory.")
 
@@ -71,9 +133,15 @@ def _do_restore(
 
         # 2. Verify database file integrity
         db_info = manifest.get("database", {})
-        db_filename = db_info.get("filename", "lumen.db")
-        expected_db_hash = db_info.get("sha256")
-        staged_db = temp_path / db_filename
+        if isinstance(db_info, str):
+            db_filename = db_info
+            expected_db_hash = None
+        elif isinstance(db_info, dict):
+            db_filename = db_info.get("filename", "lumen.db")
+            expected_db_hash = db_info.get("sha256")
+        else:
+            raise RestoreIntegrityError(f"Malformed database metadata in manifest: {type(db_info).__name__}")
+        staged_db = _safe_resolve_staged_path(temp_path, db_filename)
 
         if not staged_db.is_file():
             raise RestoreIntegrityError(f"Backup manifest references database '{db_filename}', but file is missing.")
@@ -90,7 +158,7 @@ def _do_restore(
         for src_meta in sources_list:
             relpath = src_meta.get("storage_relpath")
             expected_hash = src_meta.get("file_hash")
-            staged_source = temp_path / relpath
+            staged_source = _safe_resolve_staged_path(temp_path, relpath)
 
             if not staged_source.is_file():
                 # F25: Backup contains data but omits source files
@@ -131,7 +199,7 @@ def _do_restore(
             for src_row in db_sources:
                 relpath = src_row["storage_relpath"]
                 expected_hash = src_row["file_hash"]
-                staged_file = temp_path / relpath
+                staged_file = _safe_resolve_staged_path(temp_path, relpath)
                 if not staged_file.is_file():
                     raise RestoreIntegrityError(
                         f"Database references source file '{relpath}' (ID: {src_row['id']}) which is missing from backup assets.",
@@ -158,8 +226,11 @@ def _do_restore(
         candidate_originals.mkdir(parents=True, exist_ok=True)
         staged_originals = temp_path / "originals"
         if staged_originals.exists():
+            for p in staged_originals.rglob("*"):
+                if p.is_symlink():
+                    raise RestoreIntegrityError(f"Security violation: symlink detected in originals: {p}")
             for f in staged_originals.rglob("*"):
-                if f.is_file():
+                if f.is_file() and not f.is_symlink():
                     rel = f.relative_to(staged_originals)
                     target_file = candidate_originals / rel
                     target_file.parent.mkdir(parents=True, exist_ok=True)

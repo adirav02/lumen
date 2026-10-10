@@ -50,6 +50,7 @@ def test_defect1_concurrency_scoring_races_with_retraction(temp_workspace):
             reference_solution="0.4",
             rubric={"max_points": 10},
             checks={"math_check": True},
+            expected_revision=1,
         )
 
         diag = core1.create_assessment(
@@ -133,6 +134,7 @@ def test_defect2_unlinked_items_and_attempt_exclusivity(temp_workspace):
             reference_solution="120",
             rubric={"max_points": 10},
             checks={"math": True},
+            expected_revision=1,
         )
         ex2 = core.create_exercise("prob-c2", "comb", "Combinations")
         core.validate_exercise_version(
@@ -140,6 +142,7 @@ def test_defect2_unlinked_items_and_attempt_exclusivity(temp_workspace):
             reference_solution="10",
             rubric={"max_points": 10},
             checks={"math": True},
+            expected_revision=1,
         )
 
         diag = core.create_assessment(
@@ -207,6 +210,7 @@ def test_defect3_strict_verification_checks_and_points(temp_workspace):
                     reference_solution="x = 5",
                     rubric={"max_points": 5},
                     checks={"math": bad_check_val},
+                    expected_revision=1,
                 )
 
         # Numeric check values must be rejected
@@ -217,6 +221,7 @@ def test_defect3_strict_verification_checks_and_points(temp_workspace):
                     reference_solution="x = 5",
                     rubric={"max_points": 5},
                     checks={"math": bad_num},
+                    expected_revision=1,
                 )
 
         # Containers must be rejected
@@ -226,6 +231,7 @@ def test_defect3_strict_verification_checks_and_points(temp_workspace):
                 reference_solution="x = 5",
                 rubric={"max_points": 5},
                 checks={"math": ["step1"]},
+                expected_revision=1,
             )
 
         # Structured check with status 'failed' or 'pending' must raise error
@@ -235,6 +241,7 @@ def test_defect3_strict_verification_checks_and_points(temp_workspace):
                 reference_solution="x = 5",
                 rubric={"max_points": 5},
                 checks={"math": {"status": "failed"}},
+                expected_revision=1,
             )
         with pytest.raises(ValidationError, match="must pass, but found failed check"):
             core.validate_exercise_version(
@@ -242,6 +249,7 @@ def test_defect3_strict_verification_checks_and_points(temp_workspace):
                 reference_solution="x = 5",
                 rubric={"max_points": 5},
                 checks={"math": {"status": "pending"}},
+                expected_revision=1,
             )
 
         # Boolean False must be rejected
@@ -251,6 +259,7 @@ def test_defect3_strict_verification_checks_and_points(temp_workspace):
                 reference_solution="x = 5",
                 rubric={"max_points": 5},
                 checks={"math": False},
+                expected_revision=1,
             )
 
         # Verify database was NOT changed by failed validation attempts
@@ -263,6 +272,7 @@ def test_defect3_strict_verification_checks_and_points(temp_workspace):
             reference_solution="x = 5",
             rubric={"max_points": 5},
             checks={"reviewer_verified": True, "syntax": {"status": "passed"}},
+            expected_revision=1,
         )
         ex_ver_valid = core.exercise_repo.get_exercise_version(ver_id)
         assert ex_ver_valid.validation_state == "validated"
@@ -317,6 +327,7 @@ def test_defect4_assistance_timeline_and_subparts(temp_workspace):
             reference_solution="Mean=10, Var=2",
             rubric={"max_points": 10},
             checks={"verified": True},
+            expected_revision=1,
         )
 
         diag = core.create_assessment(
@@ -366,6 +377,7 @@ def test_defect4_assistance_timeline_and_subparts(temp_workspace):
             reference_solution="42",
             rubric={"max_points": 5},
             checks={"verified": True},
+            expected_revision=1,
         )
         diag2 = core.create_assessment(
             "prob-c4",
@@ -408,6 +420,7 @@ def test_defect5_failed_startup_preserves_unowned_assessment(temp_workspace):
             reference_solution="1",
             rubric={"max_points": 10},
             checks={"verified": True},
+            expected_revision=1,
         )
 
         diag = core.create_assessment(

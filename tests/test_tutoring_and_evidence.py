@@ -149,7 +149,7 @@ def test_f10_repeated_family_exposure_tracked(temp_workspace):
         # Two exercises in the same family
         ex1 = core.create_exercise("prob-f10", "poisson_call_center", "Poisson lambda=3, P(X=1)")
         ex2 = core.create_exercise("prob-f10", "poisson_call_center", "Poisson lambda=3, P(X=2)")
-        core.validate_exercise_version(ex2["exercise_version_id"], reference_solution="0.224", rubric={"max_points": 10}, checks=["verified"])
+        core.validate_exercise_version(ex2["exercise_version_id"], reference_solution="0.224", rubric={"max_points": 10}, checks=["verified"], expected_revision=1)
 
         # Attempt first variant
         att1 = core.start_attempt("prob-f10", ex1["exercise_version_id"])["data"]
@@ -421,9 +421,9 @@ def test_assessment_scoring_lifecycle_and_transparent_reporting(temp_workspace):
         t = core.create_topic("prob-diag-flow", name="Expectation", slug="exp")
 
         ex1 = core.create_exercise("prob-diag-flow", "exp_1", "Compute E[X] for fair die")
-        core.validate_exercise_version(ex1["exercise_version_id"], reference_solution="3.5", rubric={"max_points": 10}, checks=["verified"])
+        core.validate_exercise_version(ex1["exercise_version_id"], reference_solution="3.5", rubric={"max_points": 10}, checks=["verified"], expected_revision=1)
         ex2 = core.create_exercise("prob-diag-flow", "exp_2", "Compute E[X^2] for fair die")
-        core.validate_exercise_version(ex2["exercise_version_id"], reference_solution="15.17", rubric={"max_points": 10}, checks=["verified"])
+        core.validate_exercise_version(ex2["exercise_version_id"], reference_solution="15.17", rubric={"max_points": 10}, checks=["verified"], expected_revision=1)
 
         diag = core.create_assessment(
             "prob-diag-flow",
