@@ -119,16 +119,16 @@ class TopicAlias:
 
 
 def parse_bool(val: Any) -> bool:
-    """Strictly parse boolean values, rejecting ambiguous or misleading representations."""
-    if isinstance(val, bool):
+    """Strictly parse boolean values, rejecting ambiguous representations and boolean-as-number."""
+    if type(val) is bool:
         return val
-    if isinstance(val, (int, float)):
-        return val != 0
+    if type(val) in (int, float):
+        raise ValueError(f"Inappropriate boolean-as-number input: {val!r}")
     if isinstance(val, str):
         s = val.strip().lower()
-        if s in ("true", "1", "yes", "t"):
+        if s in ("true", "yes", "t"):
             return True
-        if s in ("false", "0", "no", "f", ""):
+        if s in ("false", "no", "f"):
             return False
     raise ValueError(f"Cannot parse boolean from {val!r}")
 

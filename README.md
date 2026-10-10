@@ -22,7 +22,7 @@ Lumen is an evidence-based, portable course tutor and learning assistant for **O
 
 ## System Requirements & Python Support
 
-- **Python**: `>= 3.10` (Tested and verified on **Python 3.14.8**).
+- **Python**: `>= 3.10` (Tested and verified locally on **Python 3.14.8**; GitHub Actions CI matrix configured for **Python 3.10, 3.11, 3.12, 3.13, 3.14**).
 - **SQLite**: `>= 3.35` with FTS5 enabled.
 - **Dependencies**: `pypdf`, `python-pptx`, `pytest` (development).
 
@@ -74,7 +74,7 @@ This runs an automated end-to-end showcase:
 
 ## Testing
 
-Run the full automated test suite covering all failure scenarios (F01–F30) from `plan.md`:
+Run the full automated test suite covering all failure scenarios (F01–F36) from `plan.md` and boundary concurrency tests (67 tests passing):
 ```bash
 pytest -v
 ```

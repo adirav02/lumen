@@ -22,18 +22,25 @@ def get_connection(db_path: Union[str, Path]) -> sqlite3.Connection:
 
     con.row_factory = sqlite3.Row
 
-    # Enforce foreign key constraints on every connection
-    con.execute("PRAGMA foreign_keys = ON;")
-    con.execute("PRAGMA busy_timeout = 30000;")
+    try:
+        # Enforce foreign key constraints on every connection
+        con.execute("PRAGMA foreign_keys = ON;")
+        con.execute("PRAGMA busy_timeout = 30000;")
 
-    # Enable WAL mode for disk databases (in-memory stays memory)
-    if path_str != ":memory:" and not path_str.startswith("file:"):
+        # Enable WAL mode for disk databases (in-memory stays memory)
+        if path_str != ":memory:" and not path_str.startswith("file:"):
+            try:
+                con.execute("PRAGMA journal_mode = WAL;")
+            except sqlite3.OperationalError:
+                pass
+
+        return con
+    except Exception:
         try:
-            con.execute("PRAGMA journal_mode = WAL;")
-        except sqlite3.OperationalError:
+            con.close()
+        except Exception:
             pass
-
-    return con
+        raise
 
 
 @contextmanager

@@ -68,6 +68,14 @@ def check_capabilities(workspace_path: Optional[Union[str, Path]] = None) -> Dic
     elif "ANTIGRAVITY" in os.environ or "GEMINI" in os.environ:
         detected_host = "antigravity"
 
+    # Check file locking
+    locking_supported = False
+    try:
+        import fcntl
+        locking_supported = hasattr(fcntl, "flock")
+    except ImportError:
+        locking_supported = False
+
     return {
         "status": "ready",
         "contract_version": "1.0.0",
@@ -79,6 +87,7 @@ def check_capabilities(workspace_path: Optional[Union[str, Path]] = None) -> Dic
             "sqlite_version": sqlite3.sqlite_version,
             "fts5_supported": fts5_working,
             "wal_supported": True,
+            "locking_supported": locking_supported,
         },
         "workspace": {
             "path": ws_str,

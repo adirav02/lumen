@@ -45,45 +45,69 @@ class LumenCore:
 
     def __init__(self, workspace_path: Union[str, Path]):
         self.workspace_root = Path(workspace_path).resolve()
-        self.workspace_root.mkdir(parents=True, exist_ok=True)
         self.db_path = self.workspace_root / "lumen.db"
+        self.sync: Optional[WorkspaceSync] = None
+        self.con: Optional[sqlite3.Connection] = None
 
-        # Shared synchronization lock for this workspace session (Defect 7)
-        self.sync = WorkspaceSync(self.workspace_root)
-        self.sync.acquire_shared()
+        try:
+            # Shared synchronization lock for this workspace session (Defect 6)
+            self.sync = WorkspaceSync(self.workspace_root)
+            self.sync.acquire_shared()
 
-        # Initialize connection and ensure migrations are applied
-        self.con = get_connection(self.db_path)
-        run_migrations(self.con)
+            self.workspace_root.mkdir(parents=True, exist_ok=True)
 
-        stat = self.db_path.stat()
-        self._expected_db_inode = (stat.st_dev, stat.st_ino)
+            # Initialize connection and ensure migrations are applied
+            self.con = get_connection(self.db_path)
+            run_migrations(self.con)
 
-        self.file_store = FileStore(self.workspace_root)
-        self.receipt_repo = ReceiptRepository(self.con)
-        self.course_repo = CourseRepository(self.con)
-        self.topic_repo = TopicRepository(self.con)
-        self.knowledge_repo = KnowledgeRepository(self.con)
-        self.exercise_repo = ExerciseRepository(self.con)
-        self.evidence_repo = EvidenceRepository(self.con)
-        self.assessment_repo = AssessmentRepository(self.con)
-        self.attempt_repo = AttemptRepository(self.con)
-        self.ingestion = IngestionPipeline(self.con, self.file_store)
-        self.search_service = SearchService(self.con)
-        self.learning_service = LearningService(self.con)
-        self.diagnostic_service = DiagnosticService(self.con)
+            stat = self.db_path.stat()
+            self._expected_db_inode = (stat.st_dev, stat.st_ino)
+
+            self.file_store = FileStore(self.workspace_root)
+            self.receipt_repo = ReceiptRepository(self.con)
+            self.course_repo = CourseRepository(self.con)
+            self.topic_repo = TopicRepository(self.con)
+            self.knowledge_repo = KnowledgeRepository(self.con)
+            self.exercise_repo = ExerciseRepository(self.con)
+            self.evidence_repo = EvidenceRepository(self.con)
+            self.assessment_repo = AssessmentRepository(self.con)
+            self.attempt_repo = AttemptRepository(self.con)
+            self.ingestion = IngestionPipeline(self.con, self.file_store)
+            self.search_service = SearchService(self.con)
+            self.learning_service = LearningService(self.con)
+            self.diagnostic_service = DiagnosticService(self.con)
+        except Exception:
+            # Release every acquired resource if any initialization stage fails (Defect 6)
+            if self.con is not None:
+                try:
+                    self.con.close()
+                except Exception:
+                    pass
+                self.con = None
+            if self.sync is not None:
+                try:
+                    self.sync.release()
+                except Exception:
+                    pass
+                self.sync = None
+            raise
 
     def close(self):
-        if hasattr(self, "con") and self.con:
+        con = getattr(self, "con", None)
+        if con is not None:
             try:
-                self.con.close()
+                con.close()
             except Exception:
                 pass
-        if hasattr(self, "sync") and self.sync:
+            self.con = None
+
+        sync = getattr(self, "sync", None)
+        if sync is not None:
             try:
-                self.sync.release()
+                sync.release()
             except Exception:
                 pass
+            self.sync = None
 
     def __enter__(self):
         return self
@@ -120,10 +144,16 @@ class LumenCore:
             data = func()
             return {"status": "success", "data": data}
 
-        canon_hash = compute_canonical_hash(params)
+        intent = {
+            "operation": operation_name,
+            "course_id": course_id,
+            "params": params,
+        }
+        canon_hash = compute_canonical_hash(intent)
+
+        # Check idempotency outside transaction
         prior_receipt = self.receipt_repo.check_idempotency(request_id, canon_hash)
         if prior_receipt:
-            # F15: Idempotent replay returns cached receipt without re-executing
             return {
                 "status": "success",
                 "idempotent_replay": True,
@@ -134,6 +164,16 @@ class LumenCore:
         # Atomically commit mutation and receipt in the same database transaction
         with atomic_transaction(self.con):
             self._verify_not_detached()
+            # Recheck idempotency inside write transaction in case of concurrent retries
+            prior_receipt = self.receipt_repo.check_idempotency(request_id, canon_hash)
+            if prior_receipt:
+                return {
+                    "status": "success",
+                    "idempotent_replay": True,
+                    "receipt": prior_receipt.to_dict(),
+                    "data": prior_receipt.response_data,
+                }
+
             data = func()
 
             affected_ids = []
@@ -646,13 +686,62 @@ class LumenCore:
         assessment_id: str,
         item_order: int,
         learner_id: str = "default_learner",
+        request_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         self._verify_not_detached()
-        return self.diagnostic_service.start_assessment_item_attempt(
-            assessment_id=assessment_id,
-            item_order=item_order,
-            learner_id=learner_id,
-        )
+        if not request_id:
+            return self.diagnostic_service.start_assessment_item_attempt(
+                assessment_id=assessment_id,
+                item_order=item_order,
+                learner_id=learner_id,
+            )
+        params = {
+            "assessment_id": assessment_id,
+            "item_order": item_order,
+            "learner_id": learner_id,
+        }
+
+        def _do():
+            return self.diagnostic_service.start_assessment_item_attempt(
+                assessment_id=assessment_id,
+                item_order=item_order,
+                learner_id=learner_id,
+            )
+
+        return self._execute_idempotent(request_id, "start_assessment_item_attempt", None, params, _do)
+
+    def link_assessment_item_attempt(
+        self,
+        assessment_id: str,
+        item_order: int,
+        attempt_id: str,
+        learner_id: Optional[str] = None,
+        request_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        self._verify_not_detached()
+        if not request_id:
+            return self.diagnostic_service.link_assessment_item_attempt(
+                assessment_id=assessment_id,
+                item_order=item_order,
+                attempt_id=attempt_id,
+                learner_id=learner_id,
+            )
+        params = {
+            "assessment_id": assessment_id,
+            "item_order": item_order,
+            "attempt_id": attempt_id,
+            "learner_id": learner_id,
+        }
+
+        def _do():
+            return self.diagnostic_service.link_assessment_item_attempt(
+                assessment_id=assessment_id,
+                item_order=item_order,
+                attempt_id=attempt_id,
+                learner_id=learner_id,
+            )
+
+        return self._execute_idempotent(request_id, "link_assessment_item_attempt", None, params, _do)
 
     def record_assessment_item_score(
         self,
@@ -660,14 +749,32 @@ class LumenCore:
         item_order: int,
         points_awarded: float,
         attempt_id: Optional[str] = None,
+        request_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         self._verify_not_detached()
-        return self.diagnostic_service.record_assessment_item_score(
-            assessment_id=assessment_id,
-            item_order=item_order,
-            points_awarded=points_awarded,
-            attempt_id=attempt_id,
-        )
+        if not request_id:
+            return self.diagnostic_service.record_assessment_item_score(
+                assessment_id=assessment_id,
+                item_order=item_order,
+                points_awarded=points_awarded,
+                attempt_id=attempt_id,
+            )
+        params = {
+            "assessment_id": assessment_id,
+            "item_order": item_order,
+            "points_awarded": float(points_awarded) if isinstance(points_awarded, (int, float)) and not isinstance(points_awarded, bool) else points_awarded,
+            "attempt_id": attempt_id,
+        }
+
+        def _do():
+            return self.diagnostic_service.record_assessment_item_score(
+                assessment_id=assessment_id,
+                item_order=item_order,
+                points_awarded=points_awarded,
+                attempt_id=attempt_id,
+            )
+
+        return self._execute_idempotent(request_id, "record_assessment_item_score", None, params, _do)
 
     # 10. Backup and Restore
     def backup(self, output_path: Union[str, Path]) -> Dict[str, Any]:

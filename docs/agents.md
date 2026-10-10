@@ -26,13 +26,19 @@ This package currently contains planning and instruction files, not an implement
 2. Read the learner's actual submission. If a symbol or image region is ambiguous, clarify that region before grading it.
 3. Identify the skill and subpart being checked. Fetch relevant course material and source locations; consult a checked reference solution or verify the reasoning as appropriate.
 4. Default to focused feedback and gradual hints. Honor requests for no hints, an explanation, or a full solution. Do not expose future subpart answers unnecessarily.
-5. Record the observed work and assistance in order. A correct answer after assistance is assisted evidence, not independent mastery. Record only submitted steps, not inferred work.
+5. Record the observed work and assistance in strict chronological order. A correct answer after assistance is assisted evidence, not independent mastery. Later assistance given after a confirmed submission is preserved as exposure history but does not rewrite earlier independent mastery. Record only submitted steps, not inferred work.
 6. Separate conceptual, method-selection, counting, algebra, and arithmetic errors when the evidence supports the distinction. Preserve correct intermediate work.
 7. On completion or an explicit pause, commit the evaluated evidence and checkpoint. Unattempted parts remain unassessed. Fatigue or stopping is not automatically a knowledge failure.
-8. If the tutor, source extraction, question, or rubric was wrong, correct/retract the affected evidence through the core and recompute the relevant topic state.
+8. If the tutor, source extraction, question, or rubric was wrong, correct/retract the affected evidence through shared core operations (`correct_evidence`) and recompute the relevant topic state. Linked assessment items automatically revert to pending review with preserved audit history.
 9. Offer a brief next step tied to observed evidence or missing coverage. Resume the same attempt when the learner returns.
 
-In diagnostics, use the coverage blueprint and checked questions. Keep answers hidden until submission or the learner requests assistance. Track prior exposure. Report performance, coverage, and assistance separately; uncertain grading remains pending.
+In diagnostics:
+- Use the established start/link/score workflow: start the item attempt (`start_assessment_item_attempt`), record the work submission and commit evaluated evidence, then record the score (`record_assessment_item_score`). Never attempt to score unlinked items or external practice attempts.
+- If explicit relinking is needed, use `link_assessment_item_attempt`, which invalidates previous scores and logs an audit trail.
+- Reuse stable request IDs across retries and respect expected revision counters.
+- Treat pending or unvalidated work as pending review; never treat pending items as validated or scored.
+- Report saving to the learner only after confirmed database persistence.
+- Keep answers hidden until submission or learner requests assistance. Track prior exposure. Report performance, coverage, and assistance separately; uncertain grading remains pending.
 
 ## Implementation mode
 
@@ -40,6 +46,9 @@ In diagnostics, use the coverage blueprint and checked questions. Keep answers h
 - Keep storage, retrieval, idempotency, provenance, and assessment computation in the shared core. Adapters translate host execution and file/image access only.
 - Make database changes through versioned migrations. Back up before a migration with material data risk; enable foreign keys on every connection and test restore.
 - Do not hold a database write transaction during model calls or file extraction. Do not sync a live database through Git or shared network folders.
+- Protect authoritative checks and writes together within atomic immediate transactions (`atomic_transaction(self.con)`).
+- Validate verification checks with strict schema: accept only boolean `True` or passing structured check state enum; reject ambiguous strings ('false', 'failed', 'pending'), numbers, and containers.
+- Release every acquired lock, connection, and file descriptor immediately upon initialization failure to ensure clean restore and recovery.
 - Use indexed, scoped queries and small mutation payloads. Log usage metadata where available without repeatedly summarizing the course.
 - Add meaningful tests for provenance, assistance ordering, corrections, duplicates, cross-course writes, interrupted commits, source version changes, and adapter conformance.
 - Verify actual host versions and instruction discovery. Do not rely on a provider-specific hook as the only persistence mechanism.

@@ -27,9 +27,13 @@ def _check_db_not_locked(db_path: Path) -> None:
         finally:
             con.close()
     except sqlite3.OperationalError as exc:
-        raise RestoreIntegrityError(
-            f"Target workspace database '{db_path}' is actively locked or in use: {exc}"
-        ) from exc
+        if "locked" in str(exc).lower() or "busy" in str(exc).lower():
+            raise RestoreIntegrityError(
+                f"Target workspace database '{db_path}' is actively locked or in use: {exc}"
+            ) from exc
+    except sqlite3.DatabaseError:
+        # A non-database or corrupted file cannot hold an active SQLite transaction lock
+        pass
 
 
 def _do_restore(

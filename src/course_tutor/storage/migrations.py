@@ -298,12 +298,24 @@ ALTER TABLE assessment_items ADD COLUMN learner_id TEXT;
 ALTER TABLE exercise_versions ADD COLUMN revision_history_json TEXT NOT NULL DEFAULT '[]';
 """
 
+MIGRATION_V5_SQL = """
+CREATE UNIQUE INDEX IF NOT EXISTS idx_assessment_items_unique_attempt ON assessment_items(attempt_id) WHERE attempt_id IS NOT NULL;
+"""
+
 MIGRATIONS: List[Tuple[int, str, str]] = [
     (1, "Initial schema for Lumen core with FTS5", MIGRATION_V1_SQL),
     (2, "Persist complete extracted sections and source locators", MIGRATION_V2_SQL),
     (3, "Track assessment item score status, audit history, and supporting evidence", MIGRATION_V3_SQL),
     (4, "Track learner ownership on assessments and revision history on exercise versions", MIGRATION_V4_SQL),
+    (5, "Enforce unique non-null attempt-to-item link in assessment_items", MIGRATION_V5_SQL),
 ]
+
+
+def _execute_sql_script(con: sqlite3.Connection, sql: str) -> None:
+    """Execute semicolon-separated DDL statements within the active transaction."""
+    statements = [stmt.strip() for stmt in sql.split(";") if stmt.strip()]
+    for stmt in statements:
+        con.execute(stmt)
 
 
 def run_migrations(con: sqlite3.Connection) -> None:
@@ -324,7 +336,7 @@ def run_migrations(con: sqlite3.Connection) -> None:
 
         for version, desc, sql in MIGRATIONS:
             if version not in applied_versions:
-                con.executescript(sql)
+                _execute_sql_script(con, sql)
                 con.execute(
                     "INSERT INTO schema_migrations (version, applied_at, description) VALUES (?, datetime('now'), ?)",
                     (version, desc),

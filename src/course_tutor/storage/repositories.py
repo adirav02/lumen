@@ -1,6 +1,7 @@
 """Repositories for database entities with strict validation, revisions, and isolation."""
 
 import json
+import re
 import sqlite3
 from typing import Any, Dict, List, Optional, Union
 import uuid
@@ -840,14 +841,49 @@ class ExerciseRepository:
         effective_solution = reference_solution if reference_solution is not None else ex_ver.reference_solution
         effective_rubric = rubric if rubric is not None else ex_ver.rubric
 
+        # Defect 3: Define explicit verification-check schema and validation
+        checks_dict: Dict[str, Any] = {}
+        failing_checks: List[str] = []
+
         if checks is None:
-            checks_dict: Dict[str, Any] = {}
+            checks_dict = {}
         elif isinstance(checks, list):
-            checks_dict = {c: True for c in checks}
+            if not checks:
+                checks_dict = {}
+            for c in checks:
+                if not isinstance(c, str) or not c.strip() or not re.match(r"^[a-zA-Z0-9_\-\.]+$", c.strip()):
+                    raise ValidationError(f"Invalid verification check name: {c!r}")
+                checks_dict[c.strip()] = True
         elif isinstance(checks, dict):
-            checks_dict = dict(checks)
+            if not checks:
+                checks_dict = {}
+            for k, v in checks.items():
+                if not isinstance(k, str) or not k.strip() or not re.match(r"^[a-zA-Z0-9_\-\.]+$", k.strip()):
+                    raise ValidationError(f"Invalid verification check name: {k!r}")
+                k_clean = k.strip()
+                if type(v) is bool:
+                    checks_dict[k_clean] = v
+                    if not v:
+                        failing_checks.append(k_clean)
+                elif isinstance(v, dict):
+                    status_val = v.get("status") or v.get("state")
+                    if not isinstance(status_val, str):
+                        raise ValidationError(f"Invalid structured check status for '{k}': {v!r}")
+                    s_lower = status_val.strip().lower()
+                    if s_lower in ("passed", "verified", "ok", "success"):
+                        checks_dict[k_clean] = v
+                    elif s_lower in ("failed", "pending", "falsified", "rejected"):
+                        checks_dict[k_clean] = v
+                        failing_checks.append(k_clean)
+                    else:
+                        raise ValidationError(f"Unknown structured check status for '{k}': {status_val!r}")
+                else:
+                    raise ValidationError(
+                        f"Invalid check value type for check '{k}': {type(v).__name__} ({v!r}). "
+                        "Checks must be boolean True or passing structured check dictionary."
+                    )
         else:
-            raise ValidationError(f"Invalid checks format: {type(checks)}")
+            raise ValidationError(f"Invalid checks format: {type(checks).__name__}")
 
         if status == "validated":
             if not effective_solution or not effective_solution.strip():
@@ -862,13 +898,16 @@ class ExerciseRepository:
                 raise ValidationError(
                     f"Cannot validate exercise version '{version_id}': missing recorded verification checks."
                 )
-            failing_checks = [k for k, v in checks_dict.items() if not bool(v)]
             if failing_checks:
                 raise ValidationError(
                     f"Cannot validate exercise version '{version_id}': verification checks must pass, but found failed check(s): {failing_checks}."
                 )
 
         with atomic_transaction(self.con):
+            ex_ver = self.get_exercise_version(version_id)
+            if not ex_ver:
+                raise ValidationError(f"Exercise version '{version_id}' not found.")
+
             solution_changed = (
                 reference_solution is not None
                 and reference_solution != ex_ver.reference_solution
@@ -903,10 +942,30 @@ class ExerciseRepository:
                     "UPDATE evidence SET status = 'pending_review', correction_reason = 'Invalidated due to reference solution or rubric change', updated_at = ? WHERE exercise_version_id = ? AND status = 'active'",
                     (utc_now_iso(), version_id),
                 )
-                self.con.execute(
-                    "UPDATE assessment_items SET score_status = 'pending_review', points_awarded = NULL WHERE exercise_version_id = ?",
-                    (version_id,),
-                )
+
+                # Invalidate linked assessment items with audit history entries
+                assessment_repo = AssessmentRepository(self.con)
+                affected_items = assessment_repo.get_items_by_exercise_version(version_id)
+                for it in affected_items:
+                    if it.points_awarded is not None:
+                        history_entry = {
+                            "points_awarded": None,
+                            "previous_points": it.points_awarded,
+                            "attempt_id": it.attempt_id,
+                            "action": "invalidated_by_exercise_update",
+                            "reason": "Invalidated due to reference solution or rubric change",
+                            "recorded_at": utc_now_iso(),
+                        }
+                        score_history = list(it.score_history) + [history_entry]
+                        assessment_repo.update_item_progress(
+                            it.id,
+                            attempt_id=it.attempt_id,
+                            points_awarded=None,
+                            score_status="pending_review",
+                            score_history=score_history,
+                            evidence_ids=[],
+                        )
+
                 self.con.execute(
                     "UPDATE assessments SET status = 'open' WHERE id IN (SELECT assessment_id FROM assessment_items WHERE exercise_version_id = ?)",
                     (version_id,),
@@ -952,29 +1011,29 @@ class ExerciseRepository:
         reference_solution: Optional[str] = None,
         rubric: Optional[Dict[str, Any]] = None,
     ) -> ExerciseVersion:
-        ex_ver = self.get_exercise_version(version_id)
-        if not ex_ver:
-            raise ValidationError(f"Exercise version '{version_id}' not found.")
+        with atomic_transaction(self.con):
+            ex_ver = self.get_exercise_version(version_id)
+            if not ex_ver:
+                raise ValidationError(f"Exercise version '{version_id}' not found.")
 
-        updates = []
-        params = []
-        content_changed = False
+            updates = []
+            params = []
+            content_changed = False
 
-        if question_text is not None and question_text != ex_ver.question_text:
-            updates.append("question_text = ?")
-            params.append(question_text)
-            content_changed = True
-        if reference_solution is not None and reference_solution != ex_ver.reference_solution:
-            updates.append("reference_solution = ?")
-            params.append(reference_solution)
-            content_changed = True
-        if rubric is not None and rubric != ex_ver.rubric:
-            updates.append("rubric_json = ?")
-            params.append(json.dumps(rubric))
-            content_changed = True
+            if question_text is not None and question_text != ex_ver.question_text:
+                updates.append("question_text = ?")
+                params.append(question_text)
+                content_changed = True
+            if reference_solution is not None and reference_solution != ex_ver.reference_solution:
+                updates.append("reference_solution = ?")
+                params.append(reference_solution)
+                content_changed = True
+            if rubric is not None and rubric != ex_ver.rubric:
+                updates.append("rubric_json = ?")
+                params.append(json.dumps(rubric))
+                content_changed = True
 
-        if content_changed:
-            with atomic_transaction(self.con):
+            if content_changed:
                 evidence_rows = self.con.execute(
                     "SELECT DISTINCT topic_id FROM evidence WHERE exercise_version_id = ? AND status = 'active'",
                     (version_id,),
@@ -1004,10 +1063,30 @@ class ExerciseRepository:
                     "UPDATE evidence SET status = 'pending_review', correction_reason = 'Invalidated due to exercise question/rubric change', updated_at = ? WHERE exercise_version_id = ? AND status = 'active'",
                     (utc_now_iso(), version_id),
                 )
-                self.con.execute(
-                    "UPDATE assessment_items SET score_status = 'pending_review', points_awarded = NULL WHERE exercise_version_id = ?",
-                    (version_id,),
-                )
+
+                # Invalidate linked assessment items with audit history entries
+                assessment_repo = AssessmentRepository(self.con)
+                affected_items = assessment_repo.get_items_by_exercise_version(version_id)
+                for it in affected_items:
+                    if it.points_awarded is not None:
+                        history_entry = {
+                            "points_awarded": None,
+                            "previous_points": it.points_awarded,
+                            "attempt_id": it.attempt_id,
+                            "action": "invalidated_by_exercise_update",
+                            "reason": "Invalidated due to exercise question/rubric change",
+                            "recorded_at": utc_now_iso(),
+                        }
+                        score_history = list(it.score_history) + [history_entry]
+                        assessment_repo.update_item_progress(
+                            it.id,
+                            attempt_id=it.attempt_id,
+                            points_awarded=None,
+                            score_status="pending_review",
+                            score_history=score_history,
+                            evidence_ids=[],
+                        )
+
                 self.con.execute(
                     "UPDATE assessments SET status = 'open' WHERE id IN (SELECT assessment_id FROM assessment_items WHERE exercise_version_id = ?)",
                     (version_id,),
@@ -1531,6 +1610,26 @@ class AssessmentRepository:
         if not row:
             return None
         return self._row_to_item(row)
+
+    def get_items_by_attempt(self, attempt_id: str) -> List[AssessmentItem]:
+        rows = self.con.execute(
+            """
+            SELECT *
+            FROM assessment_items WHERE attempt_id = ?
+            """,
+            (attempt_id,),
+        ).fetchall()
+        return [self._row_to_item(r) for r in rows]
+
+    def get_items_by_exercise_version(self, exercise_version_id: str) -> List[AssessmentItem]:
+        rows = self.con.execute(
+            """
+            SELECT *
+            FROM assessment_items WHERE exercise_version_id = ?
+            """,
+            (exercise_version_id,),
+        ).fetchall()
+        return [self._row_to_item(r) for r in rows]
 
     def update_item_score(
         self, assessment_id: str, item_order: int, attempt_id: str, points_awarded: float

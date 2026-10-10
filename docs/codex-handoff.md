@@ -2,7 +2,7 @@
 
 **Date**: 2026-10-10  
 **Repository**: `lumen`  
-**Git Base**: Verified repairs following commit `733e73890b0d84949cede4f42816d30aa9012e06`  
+**Git Base**: Verified repairs following commit `bd7c52b8665fb68cd776f4d1a7d1c94f170343bb`  
 **Author / Implementer**: Antigravity Assistant  
 **Target Recipient**: OpenAI Codex (and continuing engineering agents)
 
@@ -10,48 +10,52 @@
 
 ## 1. Executive Summary & Verified Defect Resolutions
 
-In response to Codex's independent review of commit `733e73890b0d84949cede4f42816d30aa9012e06`, all 8 identified defects have been repaired and verified across 59 automated tests (including 15 comprehensive regression tests in `tests/test_verified_defect_repairs.py`), the CLI capability inspector, and the synthetic probability demo.
+In response to Codex's independent review of commit `bd7c52b8665fb68cd776f4d1a7d1c94f170343bb`, all 6 confirmed boundary defects and related audit workflows have been repaired and verified across 67 automated tests (including 8 dedicated concurrency and boundary tests in `tests/test_boundary_repairs_concurrency.py` and 15 tests in `tests/test_verified_defect_repairs.py`), the CLI capability inspector, and the synthetic probability demo.
 
-### Second-Round Defect Fixes Implemented
+### Third-Round Defect Fixes Implemented
 
-1. **Python Compatibility (`>=3.10`)**:
-   - Fixed missing imports: `Union` in `src/course_tutor/storage/repositories.py` and `ExtractedSection` in `src/course_tutor/ingestion/pipeline.py`.
-   - Verified type annotations resolve cleanly across supported Python versions.
-   - Note: Verified on local Linux environment under Python 3.14.8.
+1. **Defect 1: Scoring Race with Evidence Retraction**:
+   - Inside `record_assessment_item_score`: all prerequisite validations (attempt linkage, ownership, exercise version validation, work submission, active evaluated evidence) execute together inside an immediate write transaction (`atomic_transaction(self.con)`).
+   - In SQLite with `BEGIN IMMEDIATE`, concurrent retractions and score updates are strictly serialized. If retraction commits first, scoring rejects due to missing active evaluated evidence. If scoring commits first, subsequent retraction reverts the item to `pending_review`, clears awarded points, and logs an audit history entry.
+   - Tested under real multi-connection SQLite concurrency covering both orderings.
 
-2. **Assistance Bypass via Subpart Resolution**:
-   - In `commit_evidence`: when `subpart_key` is omitted or `"default"`, it adopts the underlying submission event's `subpart_key`.
-   - When evaluating assistance history, preceding hints on that subpart or general hints block `demonstrated_level="independent_mastery"`.
-   - In `correct_evidence`: adopts the underlying submission event's `subpart_key` and rejects mismatched subpart renames; checks all preceding hints to block `independent_mastery`.
+2. **Defect 2: Unlinked Items Accept External Diagnostic Attempts**:
+   - `record_assessment_item_score` strictly requires an existing, persisted attempt link (`item.attempt_id`) before scoring; foreign attempts are rejected.
+   - Attempt exclusivity enforced: Migration 005 adds a partial unique index `idx_assessment_items_unique_attempt` on `assessment_items(attempt_id) WHERE attempt_id IS NOT NULL`.
+   - Explicit `link_assessment_item_attempt` workflow added to core and CLI. Relinking an item to a different attempt invalidates previous scores with an audit trail in `score_history`.
 
-3. **Assessment Scoring Binding & Idempotent Retries**:
-   - `record_assessment_item_score` strictly enforces that any supplied `attempt_id` matches the attempt linked to the item (`cannot silently relink`).
-   - Validates `attempt.mode == "diagnostic"`.
-   - Validates learner ownership across `attempt.learner_id`, `item.learner_id`, and `assessment.learner_id`.
-   - Scoring retries deduplicate `score_history` entries rather than appending redundant records.
+3. **Defect 3: Failed-Check Strings Validate Questions**:
+   - `validate_exercise_version` strictly defines and enforces check schemas. Ambiguous strings (`"false"`, `"failed"`, `"pending"`, `"0"`), numbers, and containers are strictly rejected.
+   - Boolean checks require actual `True` for passing; boolean `False` raises `ValidationError`.
+   - Structured check dictionaries require a passing status enum (`passed`, `verified`, `ok`, `success`); statuses like `failed` or `pending` raise `ValidationError`.
+   - Points awarded validated as finite numeric values (`isfinite`), rejecting booleans, NaN, and Inf.
+   - Failed validation leaves database state completely untouched.
 
-4. **Recheck Question Validation When Scoring**:
-   - `record_assessment_item_score` re-checks `exercise_version.validation_state == "validated"` at score recording time.
-   - If an exercise version was edited and reverted to `pending_review`, scoring is blocked and raises `UnvalidatedQuestionError`.
+4. **Defect 4: Later Assistance Alters Diagnostic Report**:
+   - `get_progress` determines `performance_classification` strictly based on evaluated submissions and preceding assistance (`event_index <= sub_idx`).
+   - Post-submission hints or solutions are recorded as attempt exposure (`exposure["assistance_after_submission"] = True`) without downgrading prior independent mastery (`"independent"`).
+   - Multi-subpart items with mixed independent and assisted subparts report `"mixed"` with item-level `subpart_evaluations`.
 
-5. **Exercise Validation Checks Enforcement & Atomic Snapshots**:
-   - `validate_exercise_version` strictly verifies check values: dictionary check entries with falsy or boolean `False` values are rejected with `ValidationError("All verification checks must pass...")`.
-   - Validation occurs inside an atomic transaction; check validation occurs before database modifications.
-   - Updates preserve prior content in `revision_history_json` snapshots, invalidate active evidence rows, and reset linked scored items.
+5. **Defect 5: Failed Item Startup Commits Learner Ownership**:
+   - `start_assessment_item_attempt` wraps validation and ownership assignment inside `atomic_transaction(self.con)`.
+   - Assessment existence, item existence, and exercise version validation checks execute before assigning `assessment.learner_id`.
+   - A failed start operation (e.g. nonexistent item 999) rolls back completely, preserving unowned assessments for subsequent learners.
 
-6. **Topic-State Recomputation from Invalidated Evidence**:
-   - Exposes `self.evidence_repo` directly on `LumenCore`.
-   - When an exercise version is modified or validated, recomputed topic states query all active/invalidated evidence rows for that exercise version, recomputing states even when `topic_mappings` on the exercise was initially empty.
-   - Supports transparent resolution between topic slugs and UUIDs in `get_topic_state` and `recompute_topic_state`.
+6. **Defect 6: Failed Initialization Leaks Workspace Lock**:
+   - `LumenCore.__init__` wraps initialization in `try...except`, releasing the workspace sync lock and closing the SQLite connection on any failure.
+   - `get_connection` safely closes connections if PRAGMA execution fails.
+   - `_check_db_not_locked` in restore safely catches `DatabaseError`, allowing forced restore over corrupted workspaces without false lock rejections.
+   - Verified zero file descriptor leaks across repeated initialization failures.
 
-7. **External Restore Synchronization & Detached Handle Detection**:
-   - Implemented `WorkspaceSync` (`src/course_tutor/storage/sync.py`) using `fcntl.flock` on `.workspace.sync` located in the *parent* directory of the workspace (ensuring directory moves during restore do not displace the active lock file).
-   - `LumenCore` holds a shared lock for its session lifetime; `restore_workspace` acquires an exclusive lock.
-   - `LumenCore` tracks the database inode `(st_dev, st_ino)` and detects replaced/detached database files, raising `WorkspaceDetachedError`.
+### Prior Defect Fixes Retained (from Commits 733e738 and bd7c52b)
 
-8. **Assessment Coverage Separation in Progress Reporting**:
-   - `DiagnosticService.get_progress` computes `topic_coverage` strictly from the assessment's active item evidence.
-   - Course-wide topic coverage is reported separately under `course_topic_coverage`.
+- Python compatibility across supported versions (3.10–3.14).
+- Subpart assistance bypass prevention.
+- Assessment scoring binding and deduplication.
+- Question validation rechecks and atomic snapshots.
+- Topic-state recomputation from invalidated evidence.
+- External restore synchronization via `fcntl.flock` outside the workspace directory.
+- Assessment coverage separation (`topic_coverage` vs `course_topic_coverage`).
 
 ---
 
@@ -66,9 +70,9 @@ python3 -m venv .venv
 .venv/bin/lumen capabilities
 # Output: {"status": "success", "data": {"contract_version": "1.0.0", "runtime": {"fts5_supported": true}, ...}}
 
-# 3. Full automated test suite (59/59 passed)
+# 3. Full automated test suite (67/67 passed)
 .venv/bin/pytest -v
-# Output: 59 passed in 2.24s
+# Output: 67 passed in 2.42s
 
 # 4. Standalone synthetic probability course demonstration
 .venv/bin/python demo.py
@@ -83,7 +87,16 @@ python3 -m venv .venv
 
 ## 3. Test Suite Breakdown
 
-All 59 automated test cases pass cleanly:
+All 67 automated test cases pass cleanly:
+- `tests/test_boundary_repairs_concurrency.py` (8 tests):
+  - Multi-connection concurrency between scoring and retraction (Orderings A and B).
+  - Unlinked item scoring rejection, cross-attempt isolation, attempt exclusivity (Migration 005), and relink audit.
+  - Strict verification check schema (rejection of 'false', 'failed', 'pending', numbers) and finite score validation.
+  - Assistance timeline and mixed subparts.
+  - Failed item startup preserving unowned assessments.
+  - Exception-safe LumenCore initialization releasing locks and file descriptors, allowing immediate restore.
+  - File descriptor leak prevention on repeated initialization failures.
+  - Idempotency replay, conflict detection on mismatched intents, and revision protection.
 - `tests/test_storage_and_integrity.py` (13 tests): F05, F06, F15, F16, F18, F19, F24, F25, restore fidelity, auto-cid retry, populated workspace protection, database source reference audit, complete dependency closure/cycle/cross-course/ambiguity.
 - `tests/test_ingestion_and_retrieval.py` (8 tests): F01, F02/F26, F03, F04, F23, preamble condition preservation & pending review default, raw section persistence & enrichment workflow, realistic PDF/PPTX/Hebrew fixtures.
 - `tests/test_tutoring_and_evidence.py` (12 tests): F07, F08, F09/F13, F10, F11, F12, F20, event-anchored evidence, strict booleans, duplicate evaluation rejection, solution correction boundary, diagnostic item attempt & scoring lifecycle.

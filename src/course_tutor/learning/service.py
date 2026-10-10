@@ -384,28 +384,29 @@ class LearningService:
                 state = self.evidence_repo.recompute_topic_state(old_ev.course_id, tid)
                 recomputed_states[tid] = state.to_dict()
 
-            # Follow corrections and retractions into linked assessment items (Defect 2)
-            item = self.assessment_repo.get_item_by_attempt(old_ev.attempt_id)
-            if item and item.points_awarded is not None:
-                history_entry = {
-                    "points_awarded": None,
-                    "previous_points": item.points_awarded,
-                    "attempt_id": old_ev.attempt_id,
-                    "evidence_id": evidence_id,
-                    "action": "retracted_to_pending_review" if not replacement else "superseded_to_pending_review",
-                    "reason": correction_reason,
-                    "recorded_at": utc_now_iso(),
-                }
-                score_history = list(item.score_history) + [history_entry]
-                self.assessment_repo.update_item_progress(
-                    item.id,
-                    attempt_id=item.attempt_id,
-                    points_awarded=None,
-                    score_status="pending_review",
-                    score_history=score_history,
-                    evidence_ids=[],
-                )
-                self.assessment_repo.update_assessment_status(item.assessment_id, "open")
+            # Follow corrections and retractions into linked assessment items (Defect 1 & Defect 2)
+            affected_items = self.assessment_repo.get_items_by_attempt(old_ev.attempt_id)
+            for item in affected_items:
+                if item and item.points_awarded is not None:
+                    history_entry = {
+                        "points_awarded": None,
+                        "previous_points": item.points_awarded,
+                        "attempt_id": old_ev.attempt_id,
+                        "evidence_id": evidence_id,
+                        "action": "retracted_to_pending_review" if not replacement else "superseded_to_pending_review",
+                        "reason": correction_reason,
+                        "recorded_at": utc_now_iso(),
+                    }
+                    score_history = list(item.score_history) + [history_entry]
+                    self.assessment_repo.update_item_progress(
+                        item.id,
+                        attempt_id=item.attempt_id,
+                        points_awarded=None,
+                        score_status="pending_review",
+                        score_history=score_history,
+                        evidence_ids=[],
+                    )
+                    self.assessment_repo.update_assessment_status(item.assessment_id, "open")
 
             return {
                 "status": "success",

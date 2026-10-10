@@ -202,6 +202,7 @@ All runtime milestones below are initially pending. This document package is the
 | M3 — Tutor evidence and corrections | Assisted/independent events, per-skill evidence, partial progress, pauses, corrected grading, and topic projections | Evidence is explainable and reproducible; assistance, repetition, tutor-error, and resume fixtures pass |
 | M4 — Diagnostic and practice selection | Coverage blueprints, checked questions/rubrics, resumable assessments, and transparent reports | Missing coverage/exposure/uncertainty remain visible; no unvalidated reference changes learner state |
 | M5 — Three-host conformance and measured efficiency | Real-host smoke tests, cross-host resume, held-out educational evaluations, and usage reporting | All required hosts pass the declared feature matrix, or the release explicitly remains partial; costs and accuracy are reported together |
+| M6 — Correctness and reliability repair pass | Scoring/retraction race prevention, item-to-attempt linkage/exclusivity (Migration 005), strict check schema validation, timeline assistance preservation, atomic item startup, exception-safe lock release, and CI Python matrix (3.10–3.14) | Multi-connection concurrency tests, foreign attempt rejection, strict verification tests, timeline assistance tests, zero lock/FD leak on failure, and clean restore recovery all pass |
 
 M0 includes minimal discovery early, so environment incompatibility is not discovered only after the tutor is built. M5 establishes complete integration, not a guarantee that different models make identical judgments.
 
@@ -243,6 +244,12 @@ These are tests to implement or review, not tests already passed.
 | F28 | Host can return text but cannot expose source images | Advertise the limitation and keep image-dependent verification pending |
 | F29 | A cloud workspace is recreated without data | Require explicit restore; do not invent prior progress from the new empty workspace |
 | F30 | Core save command is unavailable | State that progress is not persisted; do not return a synthetic commit receipt |
+| F31 | Scoring races with evidence retraction | Protect checks and writes in immediate transaction; reject score if retracted, or revert score to pending review on subsequent retraction |
+| F32 | External/unlinked attempt supplied to scoring | Reject unlinked attempt; enforce item-to-attempt linkage, exercise version match, learner ownership, and attempt uniqueness |
+| F33 | Ambiguous strings or numbers passed as verification checks | Strictly reject 'false', 'failed', 'pending', numbers, and containers; require boolean True or passing structured check state |
+| F34 | Assistance requested after independent submission | Maintain independent classification for earlier evaluated submission; record subsequent assistance as exposure without rewriting score |
+| F35 | Failed item startup on unowned assessment | Keep ownership assignment, validation, and linking atomic; leave assessment unowned when startup raises ValidationError |
+| F36 | Initialization failure in workspace session | Exception-safe cleanup releases locks, closes connections, and leaves zero descriptor leaks, enabling immediate restore |
 
 Use small deterministic fixtures for storage guarantees and reviewed real examples for educational correctness. Validate the reasoning and required assumptions, not only the final numeric answer.
 

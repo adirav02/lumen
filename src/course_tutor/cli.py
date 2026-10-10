@@ -259,6 +259,8 @@ def main(argv: Optional[List[str]] = None) -> None:
                         checks=payload.get("checks", {}),
                         notes=payload.get("notes", ""),
                         validation_state=payload.get("validation_state", "validated"),
+                        reference_solution=payload.get("reference_solution"),
+                        rubric=payload.get("rubric"),
                     )
                     output_json({"status": "success", "data": res})
 
@@ -267,8 +269,25 @@ def main(argv: Optional[List[str]] = None) -> None:
                         assessment_id=payload["assessment_id"],
                         item_order=payload["item_order"],
                         learner_id=payload.get("learner_id", "default_learner"),
+                        request_id=payload.get("request_id"),
                     )
-                    output_json({"status": "success", "data": res})
+                    if isinstance(res, dict) and "status" in res:
+                        output_json(res)
+                    else:
+                        output_json({"status": "success", "data": res})
+
+                elif op == "link_assessment_item_attempt":
+                    res = core.link_assessment_item_attempt(
+                        assessment_id=payload["assessment_id"],
+                        item_order=payload["item_order"],
+                        attempt_id=payload["attempt_id"],
+                        learner_id=payload.get("learner_id"),
+                        request_id=payload.get("request_id"),
+                    )
+                    if isinstance(res, dict) and "status" in res:
+                        output_json(res)
+                    else:
+                        output_json({"status": "success", "data": res})
 
                 elif op == "record_assessment_item_score":
                     res = core.record_assessment_item_score(
@@ -276,8 +295,12 @@ def main(argv: Optional[List[str]] = None) -> None:
                         item_order=payload["item_order"],
                         points_awarded=payload["points_awarded"],
                         attempt_id=payload.get("attempt_id"),
+                        request_id=payload.get("request_id"),
                     )
-                    output_json({"status": "success", "data": res})
+                    if isinstance(res, dict) and "status" in res:
+                        output_json(res)
+                    else:
+                        output_json({"status": "success", "data": res})
 
                 elif op == "backup":
                     out_path = payload.get("output_path") or (ws_path / "backup.zip")
