@@ -292,10 +292,17 @@ ALTER TABLE assessment_items ADD COLUMN score_history_json TEXT NOT NULL DEFAULT
 ALTER TABLE assessment_items ADD COLUMN evidence_ids_json TEXT NOT NULL DEFAULT '[]';
 """
 
+MIGRATION_V4_SQL = """
+ALTER TABLE assessments ADD COLUMN learner_id TEXT;
+ALTER TABLE assessment_items ADD COLUMN learner_id TEXT;
+ALTER TABLE exercise_versions ADD COLUMN revision_history_json TEXT NOT NULL DEFAULT '[]';
+"""
+
 MIGRATIONS: List[Tuple[int, str, str]] = [
     (1, "Initial schema for Lumen core with FTS5", MIGRATION_V1_SQL),
     (2, "Persist complete extracted sections and source locators", MIGRATION_V2_SQL),
     (3, "Track assessment item score status, audit history, and supporting evidence", MIGRATION_V3_SQL),
+    (4, "Track learner ownership on assessments and revision history on exercise versions", MIGRATION_V4_SQL),
 ]
 
 

@@ -154,3 +154,14 @@ class RestoreIntegrityError(LumenError):
             error_code="RESTORE_INTEGRITY_ERROR",
             details=details or {},
         )
+
+
+class WorkspaceDetachedError(LumenError):
+    """Raised when an active database handle or workspace has been replaced or detached by an external operation."""
+
+    def __init__(self, workspace_path: str, reason: str = "Database file inode has changed or handle is detached"):
+        super().__init__(
+            f"Workspace at '{workspace_path}' has been detached: {reason}",
+            error_code="WORKSPACE_DETACHED",
+            details={"workspace_path": workspace_path, "reason": reason},
+        )

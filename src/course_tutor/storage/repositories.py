@@ -2,7 +2,7 @@
 
 import json
 import sqlite3
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 import uuid
 
 from ..errors import (
@@ -35,6 +35,7 @@ from ..models import (
     UnitProvenance,
     utc_now_iso,
 )
+from .db import atomic_transaction
 
 
 class ReceiptRepository:
@@ -756,8 +757,8 @@ class ExerciseRepository:
             INSERT INTO exercise_versions (
                 id, exercise_id, course_id, version_num, question_text, subparts_json,
                 topic_mappings_json, skill_mappings_json, reference_solution, rubric_json,
-                validation_state, validation_notes, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                validation_state, validation_notes, revision_history_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 version.id,
@@ -772,6 +773,7 @@ class ExerciseRepository:
                 json.dumps(version.rubric),
                 version.validation_state,
                 version.validation_notes,
+                json.dumps(version.revision_history),
                 version.created_at,
             ),
         )
@@ -780,15 +782,14 @@ class ExerciseRepository:
     def get_exercise_version(self, version_id: str) -> Optional[ExerciseVersion]:
         row = self.con.execute(
             """
-            SELECT id, exercise_id, course_id, version_num, question_text, subparts_json,
-                   topic_mappings_json, skill_mappings_json, reference_solution, rubric_json,
-                   validation_state, validation_notes, created_at
+            SELECT *
             FROM exercise_versions WHERE id = ?
             """,
             (version_id,),
         ).fetchone()
         if not row:
             return None
+        rev_hist_raw = row["revision_history_json"] if "revision_history_json" in row.keys() else None
         return ExerciseVersion(
             id=row["id"],
             exercise_id=row["exercise_id"],
@@ -802,6 +803,7 @@ class ExerciseRepository:
             rubric=json.loads(row["rubric_json"]),
             validation_state=row["validation_state"],
             validation_notes=row["validation_notes"],
+            revision_history=json.loads(rev_hist_raw) if rev_hist_raw else [],
             created_at=row["created_at"],
         )
 
@@ -835,53 +837,113 @@ class ExerciseRepository:
         if not ex_ver:
             raise ValidationError(f"Exercise version '{version_id}' not found.")
 
-        if reference_solution is not None:
-            self.con.execute(
-                "UPDATE exercise_versions SET reference_solution = ? WHERE id = ?",
-                (reference_solution, version_id),
-            )
-            ex_ver.reference_solution = reference_solution
+        effective_solution = reference_solution if reference_solution is not None else ex_ver.reference_solution
+        effective_rubric = rubric if rubric is not None else ex_ver.rubric
 
-        if rubric is not None:
-            rubric_json = json.dumps(rubric)
-            self.con.execute(
-                "UPDATE exercise_versions SET rubric_json = ? WHERE id = ?",
-                (rubric_json, version_id),
-            )
-            ex_ver.rubric = rubric
-
-        if isinstance(checks, list):
-            checks = {c: True for c in checks}
+        if checks is None:
+            checks_dict: Dict[str, Any] = {}
+        elif isinstance(checks, list):
+            checks_dict = {c: True for c in checks}
+        elif isinstance(checks, dict):
+            checks_dict = dict(checks)
+        else:
+            raise ValidationError(f"Invalid checks format: {type(checks)}")
 
         if status == "validated":
-            if not ex_ver.reference_solution or not ex_ver.reference_solution.strip():
+            if not effective_solution or not effective_solution.strip():
                 raise ValidationError(
                     f"Cannot validate exercise version '{version_id}': missing reference or verified solution."
                 )
-            if not ex_ver.rubric or not isinstance(ex_ver.rubric, dict) or len(ex_ver.rubric) == 0:
+            if not effective_rubric or not isinstance(effective_rubric, dict) or len(effective_rubric) == 0:
                 raise ValidationError(
                     f"Cannot validate exercise version '{version_id}': missing versioned rubric."
                 )
-            if not checks or not isinstance(checks, dict) or len(checks) == 0:
+            if not checks_dict or len(checks_dict) == 0:
                 raise ValidationError(
                     f"Cannot validate exercise version '{version_id}': missing recorded verification checks."
                 )
+            failing_checks = [k for k, v in checks_dict.items() if not bool(v)]
+            if failing_checks:
+                raise ValidationError(
+                    f"Cannot validate exercise version '{version_id}': verification checks must pass, but found failed check(s): {failing_checks}."
+                )
 
-        provenance = {
-            "reviewer": reviewer,
-            "checks": checks or {},
-            "notes": notes,
-            "validated_at": utc_now_iso(),
-        }
-        provenance_json = json.dumps(provenance)
+        with atomic_transaction(self.con):
+            solution_changed = (
+                reference_solution is not None
+                and reference_solution != ex_ver.reference_solution
+                and bool(ex_ver.reference_solution)
+            )
+            rubric_changed = (
+                rubric is not None
+                and rubric != ex_ver.rubric
+                and bool(ex_ver.rubric)
+            )
 
-        self.con.execute(
-            "UPDATE exercise_versions SET validation_state = ?, validation_notes = ? WHERE id = ?",
-            (status, provenance_json, version_id),
-        )
-        ex_ver.validation_state = status
-        ex_ver.validation_notes = provenance_json
-        return ex_ver
+            revision_history = list(ex_ver.revision_history)
+            if solution_changed or rubric_changed:
+                snapshot = {
+                    "question_text": ex_ver.question_text,
+                    "reference_solution": ex_ver.reference_solution,
+                    "rubric": ex_ver.rubric,
+                    "validation_state": ex_ver.validation_state,
+                    "validation_notes": ex_ver.validation_notes,
+                    "timestamp": utc_now_iso(),
+                }
+                revision_history.append(snapshot)
+
+                evidence_rows = self.con.execute(
+                    "SELECT DISTINCT topic_id FROM evidence WHERE exercise_version_id = ? AND status = 'active'",
+                    (version_id,),
+                ).fetchall()
+                affected_topics = {r["topic_id"] for r in evidence_rows}
+                affected_topics.update(ex_ver.topic_mappings)
+
+                self.con.execute(
+                    "UPDATE evidence SET status = 'pending_review', correction_reason = 'Invalidated due to reference solution or rubric change', updated_at = ? WHERE exercise_version_id = ? AND status = 'active'",
+                    (utc_now_iso(), version_id),
+                )
+                self.con.execute(
+                    "UPDATE assessment_items SET score_status = 'pending_review', points_awarded = NULL WHERE exercise_version_id = ?",
+                    (version_id,),
+                )
+                self.con.execute(
+                    "UPDATE assessments SET status = 'open' WHERE id IN (SELECT assessment_id FROM assessment_items WHERE exercise_version_id = ?)",
+                    (version_id,),
+                )
+
+                evidence_repo = EvidenceRepository(self.con)
+                for tid in affected_topics:
+                    evidence_repo.recompute_topic_state(ex_ver.course_id, tid)
+
+            provenance = {
+                "reviewer": reviewer,
+                "checks": checks_dict,
+                "notes": notes,
+                "validated_at": utc_now_iso(),
+            }
+            provenance_json = json.dumps(provenance)
+
+            self.con.execute(
+                """
+                UPDATE exercise_versions SET
+                    reference_solution = ?,
+                    rubric_json = ?,
+                    validation_state = ?,
+                    validation_notes = ?,
+                    revision_history_json = ?
+                WHERE id = ?
+                """,
+                (
+                    effective_solution,
+                    json.dumps(effective_rubric),
+                    status,
+                    provenance_json,
+                    json.dumps(revision_history),
+                    version_id,
+                ),
+            )
+        return self.get_exercise_version(version_id)
 
     def update_exercise_version(
         self,
@@ -912,24 +974,49 @@ class ExerciseRepository:
             content_changed = True
 
         if content_changed:
-            updates.append("validation_state = 'pending_review'")
-            updates.append("validation_notes = 'Invalidated due to question or rubric changes; requires re-verification'")
-            params.append(version_id)
-            sql = f"UPDATE exercise_versions SET {', '.join(updates)} WHERE id = ?"
-            self.con.execute(sql, params)
+            with atomic_transaction(self.con):
+                evidence_rows = self.con.execute(
+                    "SELECT DISTINCT topic_id FROM evidence WHERE exercise_version_id = ? AND status = 'active'",
+                    (version_id,),
+                ).fetchall()
+                affected_topics = {r["topic_id"] for r in evidence_rows}
+                affected_topics.update(ex_ver.topic_mappings)
 
-            self.con.execute(
-                "UPDATE evidence SET status = 'pending_review', correction_reason = 'Invalidated due to exercise question/rubric change', updated_at = ? WHERE exercise_version_id = ? AND status = 'active'",
-                (utc_now_iso(), version_id),
-            )
-            self.con.execute(
-                "UPDATE assessment_items SET score_status = 'pending_review', points_awarded = NULL WHERE exercise_version_id = ?",
-                (version_id,),
-            )
-            self.con.execute(
-                "UPDATE assessments SET status = 'open' WHERE id IN (SELECT assessment_id FROM assessment_items WHERE exercise_version_id = ?)",
-                (version_id,),
-            )
+                snapshot = {
+                    "question_text": ex_ver.question_text,
+                    "reference_solution": ex_ver.reference_solution,
+                    "rubric": ex_ver.rubric,
+                    "validation_state": ex_ver.validation_state,
+                    "validation_notes": ex_ver.validation_notes,
+                    "timestamp": utc_now_iso(),
+                }
+                revision_history = list(ex_ver.revision_history) + [snapshot]
+
+                updates.append("validation_state = 'pending_review'")
+                updates.append("validation_notes = 'Invalidated due to question or rubric changes; requires re-verification'")
+                updates.append("revision_history_json = ?")
+                params.append(json.dumps(revision_history))
+                params.append(version_id)
+                sql = f"UPDATE exercise_versions SET {', '.join(updates)} WHERE id = ?"
+                self.con.execute(sql, params)
+
+                self.con.execute(
+                    "UPDATE evidence SET status = 'pending_review', correction_reason = 'Invalidated due to exercise question/rubric change', updated_at = ? WHERE exercise_version_id = ? AND status = 'active'",
+                    (utc_now_iso(), version_id),
+                )
+                self.con.execute(
+                    "UPDATE assessment_items SET score_status = 'pending_review', points_awarded = NULL WHERE exercise_version_id = ?",
+                    (version_id,),
+                )
+                self.con.execute(
+                    "UPDATE assessments SET status = 'open' WHERE id IN (SELECT assessment_id FROM assessment_items WHERE exercise_version_id = ?)",
+                    (version_id,),
+                )
+
+                evidence_repo = EvidenceRepository(self.con)
+                for tid in affected_topics:
+                    evidence_repo.recompute_topic_state(ex_ver.course_id, tid)
+
         return self.get_exercise_version(version_id)
 
 
@@ -1142,6 +1229,12 @@ class EvidenceRepository:
         return self.create_evidence(replacement)
 
     def get_topic_state(self, course_id: str, topic_id: str) -> Optional[TopicState]:
+        topic_row = self.con.execute(
+            "SELECT id FROM topics WHERE course_id = ? AND (id = ? OR slug = ?)",
+            (course_id, topic_id, topic_id),
+        ).fetchone()
+        lookup_id = topic_row["id"] if topic_row else topic_id
+
         row = self.con.execute(
             """
             SELECT id, course_id, topic_id, policy_version, independent_success_count,
@@ -1149,7 +1242,7 @@ class EvidenceRepository:
                    last_evidence_event_id, summary_json, updated_at
             FROM topic_state WHERE course_id = ? AND topic_id = ?
             """,
-            (course_id, topic_id),
+            (course_id, lookup_id),
         ).fetchone()
         if not row:
             return None
@@ -1168,9 +1261,19 @@ class EvidenceRepository:
             updated_at=row["updated_at"],
         )
 
-    def recompute_topic_state(self, course_id: str, topic_id: str) -> TopicState:
+    def recompute_topic_state(self, course_id: str, topic_id: str) -> Optional[TopicState]:
         """Deterministically rebuild topic state projection from active evidence."""
-        active_evs = self.list_evidence(course_id, topic_id=topic_id, status="active")
+        topic_row = self.con.execute(
+            "SELECT id FROM topics WHERE course_id = ? AND (id = ? OR slug = ?)",
+            (course_id, topic_id, topic_id),
+        ).fetchone()
+        if not topic_row:
+            return None
+        actual_topic_id = topic_row["id"]
+
+        active_evs = self.list_evidence(course_id, topic_id=actual_topic_id, status="active")
+        if not active_evs and topic_id != actual_topic_id:
+            active_evs = self.list_evidence(course_id, topic_id=topic_id, status="active")
 
         ind_success = sum(1 for e in active_evs if e.demonstrated_level == "independent_mastery")
         ass_success = sum(1 for e in active_evs if e.demonstrated_level == "assisted_success")
@@ -1194,7 +1297,7 @@ class EvidenceRepository:
 
         row = self.con.execute(
             "SELECT id FROM topic_state WHERE course_id = ? AND topic_id = ?",
-            (course_id, topic_id),
+            (course_id, actual_topic_id),
         ).fetchone()
 
         if row:
@@ -1232,7 +1335,7 @@ class EvidenceRepository:
                 (
                     state_id,
                     course_id,
-                    topic_id,
+                    actual_topic_id,
                     ind_success,
                     ass_success,
                     partial_prog,
@@ -1247,7 +1350,7 @@ class EvidenceRepository:
         return TopicState(
             id=state_id,
             course_id=course_id,
-            topic_id=topic_id,
+            topic_id=actual_topic_id,
             policy_version=1,
             independent_success_count=ind_success,
             assisted_success_count=ass_success,
@@ -1272,16 +1375,19 @@ class AssessmentRepository:
         d["evidence_ids"] = json.loads(evidence_ids_raw) if evidence_ids_raw else []
         if "score_status" not in d:
             d["score_status"] = "scored" if d.get("points_awarded") is not None else "unassessed"
+        if "learner_id" not in d:
+            d["learner_id"] = None
         return AssessmentItem(**d)
 
     def create_assessment(self, assessment: Assessment, items: List[AssessmentItem]) -> Assessment:
         self.con.execute(
-            "INSERT INTO assessments (id, course_id, title, blueprint_json, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO assessments (id, course_id, title, blueprint_json, learner_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 assessment.id,
                 assessment.course_id,
                 assessment.title,
                 json.dumps(assessment.blueprint),
+                assessment.learner_id,
                 assessment.status,
                 assessment.created_at,
                 assessment.updated_at,
@@ -1291,11 +1397,11 @@ class AssessmentRepository:
             self.con.execute(
                 """
                 INSERT INTO assessment_items (
-                    id, assessment_id, exercise_version_id, item_order, attempt_id,
+                    id, assessment_id, exercise_version_id, item_order, attempt_id, learner_id,
                     weight, max_points, points_awarded, exposure_count,
                     score_status, score_history_json, evidence_ids_json, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     it.id,
@@ -1303,6 +1409,7 @@ class AssessmentRepository:
                     it.exercise_version_id,
                     it.item_order,
                     it.attempt_id,
+                    it.learner_id or assessment.learner_id,
                     it.weight,
                     it.max_points,
                     it.points_awarded,
@@ -1317,7 +1424,7 @@ class AssessmentRepository:
 
     def get_assessment(self, assessment_id: str) -> Optional[Assessment]:
         row = self.con.execute(
-            "SELECT id, course_id, title, blueprint_json, status, created_at, updated_at FROM assessments WHERE id = ?",
+            "SELECT * FROM assessments WHERE id = ?",
             (assessment_id,),
         ).fetchone()
         if not row:
@@ -1327,6 +1434,7 @@ class AssessmentRepository:
             course_id=row["course_id"],
             title=row["title"],
             blueprint=json.loads(row["blueprint_json"]),
+            learner_id=row["learner_id"] if "learner_id" in row.keys() else None,
             status=row["status"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
@@ -1334,7 +1442,7 @@ class AssessmentRepository:
 
     def list_assessments(self, course_id: str) -> List[Assessment]:
         rows = self.con.execute(
-            "SELECT id, course_id, title, blueprint_json, status, created_at, updated_at FROM assessments WHERE course_id = ? ORDER BY created_at DESC",
+            "SELECT * FROM assessments WHERE course_id = ? ORDER BY created_at DESC",
             (course_id,),
         ).fetchall()
         return [
@@ -1343,12 +1451,19 @@ class AssessmentRepository:
                 course_id=r["course_id"],
                 title=r["title"],
                 blueprint=json.loads(r["blueprint_json"]),
+                learner_id=r["learner_id"] if "learner_id" in r.keys() else None,
                 status=r["status"],
                 created_at=r["created_at"],
                 updated_at=r["updated_at"],
             )
             for r in rows
         ]
+
+    def update_assessment_learner(self, assessment_id: str, learner_id: str) -> None:
+        self.con.execute(
+            "UPDATE assessments SET learner_id = ?, updated_at = ? WHERE id = ?",
+            (learner_id, utc_now_iso(), assessment_id),
+        )
 
     def get_items(self, assessment_id: str) -> List[AssessmentItem]:
         rows = self.con.execute(
@@ -1368,6 +1483,7 @@ class AssessmentRepository:
         score_status: Optional[str] = None,
         score_history: Optional[List[Dict[str, Any]]] = None,
         evidence_ids: Optional[List[str]] = None,
+        learner_id: Optional[str] = None,
     ) -> None:
         updates = ["points_awarded = ?"]
         params: List[Any] = [points_awarded]
@@ -1375,6 +1491,9 @@ class AssessmentRepository:
         if attempt_id is not None:
             updates.append("attempt_id = ?")
             params.append(attempt_id)
+        if learner_id is not None:
+            updates.append("learner_id = ?")
+            params.append(learner_id)
         if score_status is not None:
             updates.append("score_status = ?")
             params.append(score_status)

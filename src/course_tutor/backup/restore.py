@@ -12,6 +12,7 @@ import zipfile
 from ..errors import RestoreIntegrityError
 from ..storage.db import get_connection
 from ..storage.file_store import compute_sha256
+from ..storage.sync import WorkspaceSync
 
 
 def _check_db_not_locked(db_path: Path) -> None:
@@ -31,24 +32,11 @@ def _check_db_not_locked(db_path: Path) -> None:
         ) from exc
 
 
-def restore_workspace(
-    backup_path: Union[str, Path],
-    target_workspace: Union[str, Path],
-    force: bool = False,
+def _do_restore(
+    backup_src: Path,
+    target_ws: Path,
+    force: bool,
 ) -> Dict[str, Any]:
-    """Restore a workspace snapshot with strict validation of database and source files.
-
-    Verifies manifest presence, database hash, all referenced original source files,
-    database foreign keys, SQLite integrity check, and audits database source_versions.
-    Stages completely in a sandbox before activating target workspace.
-    Refuses to overwrite an existing populated workspace unless force=True.
-    """
-    backup_src = Path(backup_path).resolve()
-    target_ws = Path(target_workspace).resolve()
-
-    if not backup_src.exists():
-        raise RestoreIntegrityError(f"Backup source '{backup_src}' does not exist.")
-
     # Guard populated workspaces against accidental destruction
     if target_ws.exists() and any(target_ws.iterdir()) and not force:
         raise RestoreIntegrityError(
@@ -201,9 +189,36 @@ def restore_workspace(
             if rollback_dir and rollback_dir.exists():
                 shutil.rmtree(rollback_dir, ignore_errors=True)
 
-    return {
-        "status": "success",
-        "restored_workspace": str(target_ws),
-        "courses": courses,
-        "sources_verified": verified_sources_count,
-    }
+        return {
+            "status": "success",
+            "restored_workspace": str(target_ws),
+            "courses": courses,
+            "sources_verified": verified_sources_count,
+        }
+
+
+def restore_workspace(
+    backup_path: Union[str, Path],
+    target_workspace: Union[str, Path],
+    force: bool = False,
+) -> Dict[str, Any]:
+    """Restore a workspace snapshot with strict validation of database and source files.
+
+    Verifies manifest presence, database hash, all referenced original source files,
+    database foreign keys, SQLite integrity check, and audits database source_versions.
+    Stages completely in a sandbox before activating target workspace.
+    Refuses to overwrite an existing populated workspace unless force=True.
+    """
+    backup_src = Path(backup_path).resolve()
+    target_ws = Path(target_workspace).resolve()
+
+    if not backup_src.exists():
+        raise RestoreIntegrityError(f"Backup source '{backup_src}' does not exist.")
+
+    ws_sync = WorkspaceSync(target_ws)
+    ws_sync.acquire_exclusive()
+    try:
+        return _do_restore(backup_src, target_ws, force)
+    finally:
+        ws_sync.release()
+

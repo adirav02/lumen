@@ -150,7 +150,7 @@ class LearningService:
             affected_topic_ids: set[str] = set()
 
             for ev_data in evaluations:
-                subpart_key = ev_data.get("subpart_key", "default")
+                provided_subpart = ev_data.get("subpart_key")
                 topic_id = ev_data["topic_id"]
                 skill_id = ev_data["skill_id"]
 
@@ -181,22 +181,37 @@ class LearningService:
                         raise CrossCourseViolationError("AttemptEvent", sub_id, attempt.course_id, submission_event.course_id)
                     if not submission_event.content or not submission_event.content.strip():
                         raise ValidationError(f"Submission event '{sub_id}' contains no observed work content.")
-                    if submission_event.subpart_key and subpart_key != "default" and submission_event.subpart_key != subpart_key:
-                        raise ValidationError(
-                            f"Submission event subpart '{submission_event.subpart_key}' does not match evaluation subpart '{subpart_key}'."
-                        )
-                else:
-                    # Find last work_submission for this subpart with observed content
-                    matching_submissions = [
-                        e for e in all_events
-                        if e.event_type == "work_submission"
-                        and (e.subpart_key == subpart_key or (not e.subpart_key and subpart_key == "default") or not e.subpart_key)
-                        and e.content.strip()
-                    ]
-                    if matching_submissions:
-                        submission_event = matching_submissions[-1]
+
+                    if provided_subpart and provided_subpart != "default":
+                        if submission_event.subpart_key and submission_event.subpart_key != "default" and submission_event.subpart_key != provided_subpart:
+                            raise ValidationError(
+                                f"Submission event subpart '{submission_event.subpart_key}' does not match evaluation subpart '{provided_subpart}'."
+                            )
+                        subpart_key = provided_subpart
                     else:
-                        raise ValidationError(f"No committed work submission found for subpart '{subpart_key}' in attempt '{attempt_id}'.")
+                        subpart_key = submission_event.subpart_key or "default"
+                else:
+                    if provided_subpart and provided_subpart != "default":
+                        matching_submissions = [
+                            e for e in all_events
+                            if e.event_type == "work_submission"
+                            and (e.subpart_key == provided_subpart or not e.subpart_key)
+                            and e.content.strip()
+                        ]
+                        if not matching_submissions:
+                            raise ValidationError(f"No committed work submission found for subpart '{provided_subpart}' in attempt '{attempt_id}'.")
+                        submission_event = matching_submissions[-1]
+                        subpart_key = provided_subpart
+                    else:
+                        matching_submissions = [
+                            e for e in all_events
+                            if e.event_type == "work_submission"
+                            and e.content.strip()
+                        ]
+                        if not matching_submissions:
+                            raise ValidationError(f"No committed work submission found in attempt '{attempt_id}'.")
+                        submission_event = matching_submissions[-1]
+                        subpart_key = submission_event.subpart_key or "default"
 
                 # Reject duplicate active evaluation for the same (subpart_key, skill_id, submission_event)
                 existing_active = [
@@ -213,7 +228,13 @@ class LearningService:
                 # Events after submission must NOT downgrade work submitted prior to assistance.
                 subpart_assistance_events = [
                     e for e in all_events
-                    if (e.subpart_key == subpart_key or not e.subpart_key or not submission_event.subpart_key)
+                    if (
+                        subpart_key in (None, "", "default")
+                        or not submission_event.subpart_key
+                        or e.subpart_key in (subpart_key, submission_event.subpart_key)
+                        or not e.subpart_key
+                        or e.subpart_key in ("", "default")
+                    )
                     and e.event_index <= submission_event.event_index
                 ]
 
@@ -296,12 +317,34 @@ class LearningService:
                     raise ValidationError("Underlying evidence event is not a valid committed work_submission.")
 
                 max_idx = sub_event.event_index
-                rep_subpart = replacement.get("subpart_key", old_ev.subpart_key)
+                rep_subpart = replacement.get("subpart_key")
+                if not rep_subpart or rep_subpart == "default":
+                    rep_subpart = sub_event.subpart_key or old_ev.subpart_key or "default"
+
+                if (
+                    sub_event.subpart_key
+                    and sub_event.subpart_key != "default"
+                    and rep_subpart != "default"
+                    and rep_subpart != sub_event.subpart_key
+                ):
+                    raise ValidationError(
+                        f"Replacement subpart '{rep_subpart}' does not match underlying submission subpart '{sub_event.subpart_key}'."
+                    )
 
                 # Prevent evading assistance checks by changing subpart metadata
+                relevant_subparts = {old_ev.subpart_key, rep_subpart, sub_event.subpart_key}
+                relevant_subparts.discard(None)
+                relevant_subparts.discard("")
+                has_default_subpart = "default" in relevant_subparts or not sub_event.subpart_key
+
                 prior_events = [
                     e for e in attempt_events
-                    if (e.subpart_key in (old_ev.subpart_key, rep_subpart, sub_event.subpart_key) or not e.subpart_key)
+                    if (
+                        has_default_subpart
+                        or e.subpart_key in relevant_subparts
+                        or not e.subpart_key
+                        or e.subpart_key in ("", "default")
+                    )
                     and e.event_index <= max_idx
                 ]
                 has_solution = any(e.event_type == "solution_revealed" for e in prior_events)

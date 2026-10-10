@@ -38,6 +38,8 @@ htmlcov/
 *.db-journal
 *.db-wal
 *.db-shm
+*.sync
+.*.sync
 /.lumen/
 /storage/
 /data/

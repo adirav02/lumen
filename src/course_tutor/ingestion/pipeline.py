@@ -15,7 +15,7 @@ from ..storage.repositories import (
     SourceRepository,
     TopicRepository,
 )
-from .extractors import get_extractor
+from .extractors import ExtractedSection, get_extractor
 from .unit_builder import build_unit_from_dict, parse_structured_unit_blocks
 
 

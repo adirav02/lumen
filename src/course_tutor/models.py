@@ -212,6 +212,7 @@ class ExerciseVersion:
     rubric: Dict[str, Any] = field(default_factory=dict)
     validation_state: str = "pending_review"  # 'validated', 'pending_review', 'contradictory'
     validation_notes: str = ""
+    revision_history: List[Dict[str, Any]] = field(default_factory=list)
     created_at: str = field(default_factory=utc_now_iso)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -280,6 +281,7 @@ class Assessment:
     course_id: str
     title: str
     blueprint: Dict[str, Any] = field(default_factory=dict)
+    learner_id: Optional[str] = None
     status: str = "open"  # 'open', 'paused', 'completed'
     created_at: str = field(default_factory=utc_now_iso)
     updated_at: str = field(default_factory=utc_now_iso)
@@ -295,6 +297,7 @@ class AssessmentItem:
     exercise_version_id: str
     item_order: int
     attempt_id: Optional[str] = None
+    learner_id: Optional[str] = None
     weight: float = 1.0
     max_points: float = 10.0
     points_awarded: Optional[float] = None

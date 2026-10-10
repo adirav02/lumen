@@ -10,7 +10,7 @@ from .assessment.diagnostic import DiagnosticService
 from .backup.backup import backup_workspace
 from .backup.restore import restore_workspace
 from .capabilities import check_capabilities
-from .errors import CourseNotFoundError, LumenError, ValidationError
+from .errors import CourseNotFoundError, LumenError, ValidationError, WorkspaceDetachedError
 from .ingestion.pipeline import IngestionPipeline
 from .learning.service import LearningService
 from .models import (
@@ -28,12 +28,16 @@ from .storage.db import atomic_transaction, get_connection
 from .storage.file_store import FileStore
 from .storage.migrations import run_migrations
 from .storage.repositories import (
+    AssessmentRepository,
+    AttemptRepository,
     CourseRepository,
+    EvidenceRepository,
     ExerciseRepository,
     KnowledgeRepository,
     ReceiptRepository,
     TopicRepository,
 )
+from .storage.sync import WorkspaceSync
 
 
 class LumenCore:
@@ -44,9 +48,16 @@ class LumenCore:
         self.workspace_root.mkdir(parents=True, exist_ok=True)
         self.db_path = self.workspace_root / "lumen.db"
 
+        # Shared synchronization lock for this workspace session (Defect 7)
+        self.sync = WorkspaceSync(self.workspace_root)
+        self.sync.acquire_shared()
+
         # Initialize connection and ensure migrations are applied
         self.con = get_connection(self.db_path)
         run_migrations(self.con)
+
+        stat = self.db_path.stat()
+        self._expected_db_inode = (stat.st_dev, stat.st_ino)
 
         self.file_store = FileStore(self.workspace_root)
         self.receipt_repo = ReceiptRepository(self.con)
@@ -54,14 +65,45 @@ class LumenCore:
         self.topic_repo = TopicRepository(self.con)
         self.knowledge_repo = KnowledgeRepository(self.con)
         self.exercise_repo = ExerciseRepository(self.con)
+        self.evidence_repo = EvidenceRepository(self.con)
+        self.assessment_repo = AssessmentRepository(self.con)
+        self.attempt_repo = AttemptRepository(self.con)
         self.ingestion = IngestionPipeline(self.con, self.file_store)
         self.search_service = SearchService(self.con)
         self.learning_service = LearningService(self.con)
         self.diagnostic_service = DiagnosticService(self.con)
 
     def close(self):
-        if self.con:
-            self.con.close()
+        if hasattr(self, "con") and self.con:
+            try:
+                self.con.close()
+            except Exception:
+                pass
+        if hasattr(self, "sync") and self.sync:
+            try:
+                self.sync.release()
+            except Exception:
+                pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def _verify_not_detached(self) -> None:
+        """Detect detached or replaced database handles (Defect 7)."""
+        if not self.db_path.exists():
+            raise WorkspaceDetachedError(
+                str(self.workspace_root),
+                f"Database file '{self.db_path}' no longer exists; workspace handle is detached.",
+            )
+        stat = self.db_path.stat()
+        if (stat.st_dev, stat.st_ino) != self._expected_db_inode:
+            raise WorkspaceDetachedError(
+                str(self.workspace_root),
+                f"Database file inode has changed from {self._expected_db_inode} to {(stat.st_dev, stat.st_ino)}; handle is detached.",
+            )
 
     def _execute_idempotent(
         self,
@@ -72,6 +114,7 @@ class LumenCore:
         func,
     ) -> Dict[str, Any]:
         """Wrap mutating operations with request hashing and idempotency receipts (F15, F16)."""
+        self._verify_not_detached()
         if not request_id:
             # Non-idempotent direct execution
             data = func()
@@ -90,6 +133,7 @@ class LumenCore:
 
         # Atomically commit mutation and receipt in the same database transaction
         with atomic_transaction(self.con):
+            self._verify_not_detached()
             data = func()
 
             affected_ids = []
@@ -389,6 +433,8 @@ class LumenCore:
             "exercise_version_id": ver_id,
             "version_num": 1,
             "validation_state": actual_validation_state,
+            "topic_mappings": topic_mappings or [],
+            "skill_mappings": skill_mappings or [],
         }
 
     # 8. Attempts & Learning
@@ -528,6 +574,7 @@ class LumenCore:
         title: str,
         blueprint: Dict[str, Any],
         selected_exercise_version_ids: Optional[List[str]] = None,
+        learner_id: Optional[str] = None,
         request_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         params = {
@@ -535,6 +582,7 @@ class LumenCore:
             "title": title,
             "blueprint": blueprint,
             "selected_exercise_version_ids": selected_exercise_version_ids or [],
+            "learner_id": learner_id,
         }
 
         def _do():
@@ -543,6 +591,7 @@ class LumenCore:
                 title=title,
                 blueprint=blueprint,
                 selected_exercise_version_ids=selected_exercise_version_ids,
+                learner_id=learner_id,
             )
 
         return self._execute_idempotent(request_id, "create_assessment", course_id, params, _do)
@@ -557,6 +606,7 @@ class LumenCore:
         reference_solution: Optional[str] = None,
         rubric: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        self._verify_not_detached()
         ver = self.exercise_repo.validate_exercise_version(
             version_id=version_id,
             reviewer=reviewer,
@@ -575,6 +625,7 @@ class LumenCore:
         reference_solution: Optional[str] = None,
         rubric: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        self._verify_not_detached()
         with atomic_transaction(self.con):
             ver = self.exercise_repo.update_exercise_version(
                 version_id=version_id,
@@ -587,6 +638,7 @@ class LumenCore:
             return ver.to_dict()
 
     def assessment_progress(self, assessment_id: str) -> Dict[str, Any]:
+        self._verify_not_detached()
         return self.diagnostic_service.get_progress(assessment_id)
 
     def start_assessment_item_attempt(
@@ -595,6 +647,7 @@ class LumenCore:
         item_order: int,
         learner_id: str = "default_learner",
     ) -> Dict[str, Any]:
+        self._verify_not_detached()
         return self.diagnostic_service.start_assessment_item_attempt(
             assessment_id=assessment_id,
             item_order=item_order,
@@ -608,6 +661,7 @@ class LumenCore:
         points_awarded: float,
         attempt_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        self._verify_not_detached()
         return self.diagnostic_service.record_assessment_item_score(
             assessment_id=assessment_id,
             item_order=item_order,

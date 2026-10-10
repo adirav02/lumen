@@ -91,9 +91,12 @@ def test_f21_weak_topic_practice_does_not_mask_untested_coverage(temp_workspace)
         )["data"]
 
         prog = core.assessment_progress(diag["assessment_id"])
-        # Coverage must clearly flag Continuous Random Variables as unassessed
+        # Assessment-specific coverage: neither topic has been assessed in this diagnostic yet
         assert prog["topic_coverage"]["Continuous Random Variables"]["assessed"] is False
-        assert prog["topic_coverage"]["Bayes Theorem"]["assessed"] is True
+        assert prog["topic_coverage"]["Bayes Theorem"]["assessed"] is False
+        # Course-wide coverage: Bayes Theorem was practiced, while Continuous Random Variables remains unassessed
+        assert prog["course_topic_coverage"]["Bayes Theorem"]["assessed"] is True
+        assert prog["course_topic_coverage"]["Continuous Random Variables"]["assessed"] is False
     finally:
         core.close()
 

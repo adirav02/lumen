@@ -7,6 +7,7 @@ import uuid
 
 from ..errors import CourseNotFoundError, CrossCourseViolationError, UnvalidatedQuestionError, ValidationError
 from ..models import Assessment, AssessmentItem, ExerciseVersion, utc_now_iso
+from ..storage.db import atomic_transaction
 from ..storage.repositories import (
     AssessmentRepository,
     AttemptRepository,
@@ -35,6 +36,7 @@ class DiagnosticService:
         title: str,
         blueprint: Dict[str, Any],
         selected_exercise_version_ids: Optional[List[str]] = None,
+        learner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create a diagnostic assessment adhering to a topic blueprint and validated materials."""
         course = self.course_repo.get_course(course_id)
@@ -47,6 +49,7 @@ class DiagnosticService:
             course_id=course_id,
             title=title,
             blueprint=blueprint,
+            learner_id=learner_id,
             status="open",
         )
 
@@ -72,6 +75,7 @@ class DiagnosticService:
                     assessment_id=assessment_id,
                     exercise_version_id=ex_ver_id,
                     item_order=item_order,
+                    learner_id=learner_id,
                     weight=1.0,
                     max_points=10.0,
                     exposure_count=exposure_count,
@@ -100,6 +104,13 @@ class DiagnosticService:
         if not assessment:
             raise ValidationError(f"Assessment '{assessment_id}' not found.")
 
+        if not assessment.learner_id:
+            self.assessment_repo.update_assessment_learner(assessment_id, learner_id)
+        elif assessment.learner_id != learner_id:
+            raise ValidationError(
+                f"Assessment '{assessment_id}' belongs to learner '{assessment.learner_id}', cannot start attempt for '{learner_id}'."
+            )
+
         item = self.assessment_repo.get_item_by_order(assessment_id, item_order)
         if not item:
             raise ValidationError(f"Item {item_order} not found in assessment '{assessment_id}'.")
@@ -112,8 +123,8 @@ class DiagnosticService:
             mode="diagnostic",
         )
 
-        # Link attempt to assessment item
-        self.assessment_repo.update_item_progress(item.id, attempt_id=attempt.id)
+        # Link attempt to assessment item and record learner_id
+        self.assessment_repo.update_item_progress(item.id, attempt_id=attempt.id, learner_id=learner_id)
 
         return {
             "assessment_id": assessment_id,
@@ -152,6 +163,11 @@ class DiagnosticService:
                 f"Cannot award score for item {item_order} without an active, linked attempt."
             )
 
+        if item.attempt_id and attempt_id is not None and attempt_id != item.attempt_id:
+            raise ValidationError(
+                f"Attempt '{attempt_id}' does not match assessment item {item_order} linked attempt '{item.attempt_id}'."
+            )
+
         attempt = self.attempt_repo.get_attempt(linked_attempt_id)
         if not attempt:
             raise ValidationError(f"Attempt '{linked_attempt_id}' not found.")
@@ -164,6 +180,33 @@ class DiagnosticService:
             raise ValidationError(
                 f"Attempt '{linked_attempt_id}' exercise version '{attempt.exercise_version_id}' "
                 f"does not match assessment item {item_order} version '{item.exercise_version_id}'."
+            )
+
+        # Check mode == "diagnostic"
+        if attempt.mode != "diagnostic":
+            raise ValidationError(
+                f"Attempt '{linked_attempt_id}' has mode '{attempt.mode}', expected 'diagnostic'."
+            )
+
+        # Check learner ownership
+        if item.learner_id and attempt.learner_id != item.learner_id:
+            raise ValidationError(
+                f"Attempt '{linked_attempt_id}' learner '{attempt.learner_id}' does not match assessment item learner '{item.learner_id}'."
+            )
+        if assessment.learner_id and attempt.learner_id != assessment.learner_id:
+            raise ValidationError(
+                f"Attempt '{linked_attempt_id}' learner '{attempt.learner_id}' does not match assessment learner '{assessment.learner_id}'."
+            )
+
+        # Recheck question validation when scoring (Defect 4)
+        ex_ver = self.exercise_repo.get_exercise_version(item.exercise_version_id)
+        if not ex_ver:
+            raise ValidationError(f"Exercise version '{item.exercise_version_id}' not found.")
+        if ex_ver.validation_state != "validated":
+            raise UnvalidatedQuestionError(
+                item.exercise_version_id,
+                ex_ver.validation_state,
+                details={"reason": "Cannot record assessment score for an exercise version that is not validated."},
             )
 
         # Require a committed work submission with observed content
@@ -194,33 +237,53 @@ class DiagnosticService:
                 f"Active evidence in attempt '{linked_attempt_id}' is not linked to any committed work submission."
             )
 
-        # Build audit history entry
         ev_ids = [e.id for e in valid_evidence]
-        history_entry = {
-            "points_awarded": float(points_awarded),
-            "previous_points": item.points_awarded,
-            "attempt_id": linked_attempt_id,
-            "evidence_ids": ev_ids,
-            "recorded_at": utc_now_iso(),
-            "action": "score_recorded",
-        }
-        score_history = list(item.score_history) + [history_entry]
 
-        self.assessment_repo.update_item_progress(
-            item.id,
-            attempt_id=linked_attempt_id,
-            points_awarded=float(points_awarded),
-            score_status="scored",
-            score_history=score_history,
-            evidence_ids=ev_ids,
-        )
+        # Prevent duplicate score history on idempotent retries (Defect 3)
+        if (
+            item.score_status == "scored"
+            and item.points_awarded == float(points_awarded)
+            and item.attempt_id == linked_attempt_id
+            and set(item.evidence_ids) == set(ev_ids)
+        ):
+            return {
+                "assessment_id": assessment_id,
+                "item_order": item_order,
+                "points_awarded": float(points_awarded),
+                "max_points": item.max_points,
+                "score_status": "scored",
+                "score_history": item.score_history,
+                "attempt_id": linked_attempt_id,
+                "evidence_ids": item.evidence_ids,
+            }
 
-        # Update assessment completion status: only completed when ALL items are scored
-        all_items = self.assessment_repo.get_items(assessment_id)
-        if all((it.points_awarded is not None and it.score_status == "scored") or (it.id == item.id and points_awarded is not None) for it in all_items):
-            self.assessment_repo.update_assessment_status(assessment_id, "completed")
-        else:
-            self.assessment_repo.update_assessment_status(assessment_id, "open")
+        with atomic_transaction(self.con):
+            # Build audit history entry
+            history_entry = {
+                "points_awarded": float(points_awarded),
+                "previous_points": item.points_awarded,
+                "attempt_id": linked_attempt_id,
+                "evidence_ids": ev_ids,
+                "recorded_at": utc_now_iso(),
+                "action": "score_recorded",
+            }
+            score_history = list(item.score_history) + [history_entry]
+
+            self.assessment_repo.update_item_progress(
+                item.id,
+                attempt_id=linked_attempt_id,
+                points_awarded=float(points_awarded),
+                score_status="scored",
+                score_history=score_history,
+                evidence_ids=ev_ids,
+            )
+
+            # Update assessment completion status: only completed when ALL items are scored
+            all_items = self.assessment_repo.get_items(assessment_id)
+            if all((it.points_awarded is not None and it.score_status == "scored") or (it.id == item.id and points_awarded is not None) for it in all_items):
+                self.assessment_repo.update_assessment_status(assessment_id, "completed")
+            else:
+                self.assessment_repo.update_assessment_status(assessment_id, "open")
 
         return {
             "assessment_id": assessment_id,
@@ -318,20 +381,27 @@ class DiagnosticService:
         required_topic_ids = blueprint.get("topic_ids", [])
         course_topics = {t.id: t for t in self.topic_repo.list_topics(assessment.course_id)}
         topic_coverage: Dict[str, Any] = {}
+        course_topic_coverage: Dict[str, Any] = {}
+
+        # Collect active evidence specifically belonging to this assessment's attempted items (Defect 8)
+        assessment_attempt_ids = {it.attempt_id for it in items if it.attempt_id}
+        all_active_evs = self.evidence_repo.list_evidence(course_id=assessment.course_id, status="active")
+        assessment_evs = [e for e in all_active_evs if e.attempt_id in assessment_attempt_ids]
 
         for tid in required_topic_ids:
             t = course_topics.get(tid)
             t_name = t.name if t else tid
-            state = self.evidence_repo.get_topic_state(assessment.course_id, tid)
 
-            if state:
+            # 1. Assessment-scoped topic coverage
+            t_assessment_evs = [e for e in assessment_evs if e.topic_id == tid]
+            if t_assessment_evs:
                 topic_coverage[t_name] = {
                     "topic_id": tid,
-                    "assessed": not state.unassessed_flag,
-                    "independent_successes": state.independent_success_count,
-                    "assisted_successes": state.assisted_success_count,
-                    "partial_progress": state.partial_progress_count,
-                    "errors": state.error_count,
+                    "assessed": True,
+                    "independent_successes": sum(1 for e in t_assessment_evs if e.demonstrated_level == "independent_mastery"),
+                    "assisted_successes": sum(1 for e in t_assessment_evs if e.demonstrated_level == "assisted_success"),
+                    "partial_progress": sum(1 for e in t_assessment_evs if e.demonstrated_level == "partial_progress"),
+                    "errors": sum(1 for e in t_assessment_evs if e.demonstrated_level == "incorrect"),
                 }
             else:
                 topic_coverage[t_name] = {
@@ -341,7 +411,29 @@ class DiagnosticService:
                     "assisted_successes": 0,
                     "partial_progress": 0,
                     "errors": 0,
-                    "note": "Untested / missing evidence",
+                    "note": "Untested in this assessment / missing evidence",
+                }
+
+            # 2. Course-wide topic coverage
+            state = self.evidence_repo.get_topic_state(assessment.course_id, tid)
+            if state:
+                course_topic_coverage[t_name] = {
+                    "topic_id": tid,
+                    "assessed": not state.unassessed_flag,
+                    "independent_successes": state.independent_success_count,
+                    "assisted_successes": state.assisted_success_count,
+                    "partial_progress": state.partial_progress_count,
+                    "errors": state.error_count,
+                }
+            else:
+                course_topic_coverage[t_name] = {
+                    "topic_id": tid,
+                    "assessed": False,
+                    "independent_successes": 0,
+                    "assisted_successes": 0,
+                    "partial_progress": 0,
+                    "errors": 0,
+                    "note": "Untested in course / missing evidence",
                 }
 
         observed_percentage = (
@@ -386,6 +478,7 @@ class DiagnosticService:
             "observed_scores": observed_scores,
             "coverage": topic_coverage,
             "topic_coverage": topic_coverage,
+            "course_topic_coverage": course_topic_coverage,
             "assistance": assistance_summary,
             "pending_work": pending_work,
             "items": items_summary,

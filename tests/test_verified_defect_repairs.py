@@ -1,10 +1,14 @@
 """Comprehensive regression tests verifying fixes for Defects 1 through 7 in Lumen."""
 
+import importlib
 import json
 import math
 from pathlib import Path
+import pkgutil
 import sqlite3
 import tempfile
+import types
+import typing
 import uuid
 import pytest
 
@@ -13,6 +17,7 @@ from course_tutor.errors import (
     RestoreIntegrityError,
     UnvalidatedQuestionError,
     ValidationError,
+    WorkspaceDetachedError,
 )
 
 
@@ -503,3 +508,425 @@ def test_defect7_recoverable_restore_activation(temp_workspace):
         assert "prob-dest" not in course_ids
     finally:
         core_restored.close()
+
+
+# ==============================================================================
+# CODEX DEFECT 1: Restore compatibility with supported Python versions
+# ==============================================================================
+
+def test_defect_codex_1_python_compatibility_type_hints():
+    """Verify that type annotations evaluate cleanly across all classes and functions."""
+    import course_tutor
+    import course_tutor.storage.repositories as repos_mod
+    import course_tutor.ingestion.pipeline as pipe_mod
+
+    # Verify explicitly repaired imports
+    assert hasattr(repos_mod, "Union")
+    assert hasattr(pipe_mod, "ExtractedSection")
+
+    # Verify typing.get_type_hints succeeds without NameError across entire package
+    for module_info in pkgutil.walk_packages(course_tutor.__path__, course_tutor.__name__ + "."):
+        mod = importlib.import_module(module_info.name)
+        for attr_name in dir(mod):
+            attr = getattr(mod, attr_name)
+            if isinstance(attr, type):
+                typing.get_type_hints(attr)
+            elif isinstance(attr, (types.FunctionType, types.MethodType)):
+                typing.get_type_hints(attr)
+
+
+# ==============================================================================
+# CODEX DEFECT 2: Assistance bypass in commit_evidence & correct_evidence
+# ==============================================================================
+
+def test_defect_codex_2_subpart_assistance_bypass_prevention(temp_workspace):
+    """Verify that omitted/default subparts adopt the submission's subpart and cannot evade hints."""
+    core = LumenCore(temp_workspace)
+    try:
+        core.create_course("Probability", course_id="prob-c2")
+        t = core.create_topic("prob-c2", name="Conditioning", slug="cond")
+        ex = core.create_exercise("prob-c2", "cond_1", "Calculate P(A|B) and P(B|A)")
+        core.validate_exercise_version(
+            ex["exercise_version_id"],
+            reference_solution="0.4 and 0.8",
+            rubric={"max_points": 10},
+            checks=["checked"],
+        )
+
+        att = core.start_attempt("prob-c2", ex["exercise_version_id"])["data"]
+        att_id = att["id"]
+
+        # Learner receives hint on subpart a
+        core.record_attempt_event(
+            att_id, expected_revision=1, event_type="hint_given", subpart_key="part_a", content="Use definition of P(A|B)"
+        )
+
+        # Learner submits work for subpart a
+        sub_a = core.record_attempt_event(
+            att_id, expected_revision=2, event_type="work_submission", subpart_key="part_a", content="P(A|B) = 0.4"
+        )["data"]
+
+        # Tutor attempts to commit evidence WITHOUT specifying subpart_key (or with 'default')
+        # requesting 'independent_mastery'. This must NOT evade the hint on part_a!
+        with pytest.raises(ValidationError, match="Cannot award 'independent_mastery' when hint was given"):
+            core.commit_evidence(
+                att_id,
+                evaluations=[{
+                    "topic_id": t["id"],
+                    "skill_id": "cond_calc",
+                    "correct": True,
+                    "demonstrated_level": "independent_mastery",
+                }],
+            )
+
+        # Committing with auto level must adopt 'part_a' and evaluate to 'assisted_success'
+        ev_res = core.commit_evidence(
+            att_id,
+            evaluations=[{"topic_id": t["id"], "skill_id": "cond_calc", "correct": True}],
+        )["data"]
+        ev = ev_res["evidence_created"][0]
+        assert ev["subpart_key"] == "part_a"
+        assert ev["demonstrated_level"] == "assisted_success"
+
+        # In correct_evidence, attempting to rename subpart to bypass assistance check is rejected
+        with pytest.raises(ValidationError, match="does not match underlying submission subpart"):
+            core.correct_evidence(
+                evidence_id=ev["id"],
+                correction_reason="Attempting to rename subpart to evade assistance",
+                replacement={
+                    "subpart_key": "renamed_subpart",
+                    "demonstrated_level": "independent_mastery",
+                },
+            )
+
+        # In correct_evidence, omitting subpart adopts 'part_a' and still blocks 'independent_mastery'
+        with pytest.raises(ValidationError, match="Cannot assign 'independent_mastery' via correction when hint was given"):
+            core.correct_evidence(
+                evidence_id=ev["id"],
+                correction_reason="Attempting to claim independent mastery",
+                replacement={
+                    "demonstrated_level": "independent_mastery",
+                },
+            )
+    finally:
+        core.close()
+
+
+# ==============================================================================
+# CODEX DEFECT 3: Assessment scoring binding and idempotent retries
+# ==============================================================================
+
+def test_defect_codex_3_assessment_scoring_binding_and_idempotency(temp_workspace):
+    """Verify item attempt binding, mode checks, learner ownership, and deduplicated scoring history."""
+    core = LumenCore(temp_workspace)
+    try:
+        core.create_course("Probability", course_id="prob-c3")
+        t = core.create_topic("prob-c3", name="Expectation", slug="exp")
+        ex = core.create_exercise("prob-c3", "exp_1", "Calculate E[X]")
+        core.validate_exercise_version(
+            ex["exercise_version_id"],
+            reference_solution="3.5",
+            rubric={"max_points": 10},
+            checks=["checked"],
+        )
+
+        diag = core.create_assessment(
+            "prob-c3",
+            "Expectation Diagnostic",
+            blueprint={"topic_ids": [t["id"]]},
+            selected_exercise_version_ids=[ex["exercise_version_id"]],
+        )["data"]
+        diag_id = diag["assessment_id"]
+
+        # Start attempt for Alice in diagnostic mode
+        item_att = core.start_assessment_item_attempt(diag_id, item_order=1, learner_id="alice")
+        alice_att_id = item_att["attempt"]["id"]
+
+        # 1. Scoring with a different attempt ID must be rejected (cannot silently relink)
+        foreign_att = core.learning_service.start_attempt("prob-c3", ex["exercise_version_id"], learner_id="alice", mode="diagnostic")
+        with pytest.raises(ValidationError, match="does not match assessment item"):
+            core.record_assessment_item_score(diag_id, item_order=1, points_awarded=10.0, attempt_id=foreign_att.id)
+
+        # 2. Complete Alice's attempt
+        core.record_attempt_event(alice_att_id, expected_revision=1, event_type="work_submission", content="E[X] = 3.5")
+        core.commit_evidence(alice_att_id, evaluations=[{"topic_id": t["id"], "skill_id": "exp_calc", "correct": True}])
+
+        # 3. Valid score recording succeeds
+        score1 = core.record_assessment_item_score(diag_id, item_order=1, points_awarded=9.0, attempt_id=alice_att_id)
+        assert score1["points_awarded"] == 9.0
+        assert len(score1["score_history"]) == 1
+
+        # 4. Idempotent retry must NOT append duplicate score_history entries
+        score2 = core.record_assessment_item_score(diag_id, item_order=1, points_awarded=9.0, attempt_id=alice_att_id)
+        assert score2["points_awarded"] == 9.0
+        assert len(score2["score_history"]) == 1
+
+        # Check persistence
+        item = core.assessment_repo.get_item_by_order(diag_id, 1)
+        assert len(item.score_history) == 1
+    finally:
+        core.close()
+
+
+# ==============================================================================
+# CODEX DEFECT 4: Recheck question validation when scoring
+# ==============================================================================
+
+def test_defect_codex_4_recheck_question_validation_when_scoring(temp_workspace):
+    """Verify that editing question text blocks scoring if validation_state becomes pending_review."""
+    core = LumenCore(temp_workspace)
+    try:
+        core.create_course("Probability", course_id="prob-c4")
+        t = core.create_topic("prob-c4", name="Variance", slug="var")
+        ex = core.create_exercise("prob-c4", "var_1", "Calculate Var(X)")
+        val_ver = core.validate_exercise_version(
+            ex["exercise_version_id"],
+            reference_solution="2.5",
+            rubric={"max_points": 10},
+            checks=["checked"],
+        )
+        ex_ver_id = val_ver["id"]
+
+        diag = core.create_assessment(
+            "prob-c4",
+            "Variance Diagnostic",
+            blueprint={"topic_ids": [t["id"]]},
+            selected_exercise_version_ids=[ex_ver_id],
+        )["data"]
+        diag_id = diag["assessment_id"]
+
+        item_att = core.start_assessment_item_attempt(diag_id, item_order=1)
+        att_id = item_att["attempt"]["id"]
+        core.record_attempt_event(att_id, expected_revision=1, event_type="work_submission", content="Var(X) = 2.5")
+        core.commit_evidence(att_id, evaluations=[{"topic_id": t["id"], "skill_id": "var_calc", "correct": True}])
+
+        # Question is edited, reverting to pending_review
+        core.update_exercise_version(ex_ver_id, question_text="Calculate Var(X) for fair die")
+        current_ver = core.exercise_repo.get_exercise_version(ex_ver_id)
+        assert current_ver.validation_state == "pending_review"
+
+        # Attempting to score must be blocked
+        with pytest.raises(UnvalidatedQuestionError, match="not validated"):
+            core.record_assessment_item_score(diag_id, item_order=1, points_awarded=10.0, attempt_id=att_id)
+
+        # Re-validating the exercise allows scoring once active evidence is re-evaluated
+        core.validate_exercise_version(
+            ex_ver_id,
+            reference_solution="2.5",
+            rubric={"max_points": 10},
+            checks=["re_checked"],
+        )
+        core.commit_evidence(att_id, evaluations=[{"topic_id": t["id"], "skill_id": "var_calc", "correct": True}])
+        score_res = core.record_assessment_item_score(diag_id, item_order=1, points_awarded=10.0, attempt_id=att_id)
+        assert score_res["points_awarded"] == 10.0
+    finally:
+        core.close()
+
+
+# ==============================================================================
+# CODEX DEFECT 5: Exercise validation checks enforcement & atomic snapshots
+# ==============================================================================
+
+def test_defect_codex_5_exercise_validation_atomic_checks_and_snapshots(temp_workspace):
+    """Verify that failing checks are rejected and failed validation leaves DB content unchanged."""
+    core = LumenCore(temp_workspace)
+    try:
+        core.create_course("Probability", course_id="prob-c5")
+        ex = core.create_exercise("prob-c5", "ex_atom", "What is P(S)?")
+        ver_id = ex["exercise_version_id"]
+
+        # 1. Validation with failing checks is rejected
+        with pytest.raises(ValidationError, match="verification checks must pass"):
+            core.validate_exercise_version(
+                ver_id,
+                reference_solution="1.0",
+                rubric={"max_points": 5},
+                checks={"syntax_check": True, "math_check": False},
+            )
+
+        # Stored content must be completely unchanged in DB
+        unmod_ver = core.exercise_repo.get_exercise_version(ver_id)
+        assert unmod_ver.validation_state == "pending_review"
+        assert unmod_ver.reference_solution == ""
+        assert unmod_ver.rubric == {}
+
+        # 2. Proper validation succeeds
+        val_ver = core.validate_exercise_version(
+            ver_id,
+            reference_solution="1.0",
+            rubric={"max_points": 5},
+            checks={"syntax_check": True, "math_check": True},
+        )
+        assert val_ver["validation_state"] == "validated"
+
+        # 3. Changing reference solution routes through revision snapshot
+        reval_ver = core.validate_exercise_version(
+            ver_id,
+            reference_solution="P(S) is identically 1.0 by axiom",
+            rubric={"max_points": 5},
+            checks=["verified_axioms"],
+        )
+        ver_after = core.exercise_repo.get_exercise_version(ver_id)
+        assert len(ver_after.revision_history) >= 1
+        last_snap = ver_after.revision_history[-1]
+        assert last_snap["reference_solution"] == "1.0"
+    finally:
+        core.close()
+
+
+# ==============================================================================
+# CODEX DEFECT 6: Topic-state recomputation from invalidated evidence
+# ==============================================================================
+
+def test_defect_codex_6_topic_state_recomputation_from_invalidated_evidence(temp_workspace):
+    """Verify core.evidence_repo access and recomputation of topic states from invalidated evidence rows."""
+    core = LumenCore(temp_workspace)
+    try:
+        assert hasattr(core, "evidence_repo")
+        assert core.evidence_repo is not None
+
+        core.create_course("Probability", course_id="prob-c6")
+        t = core.create_topic("prob-c6", name="Axioms", slug="axioms")
+
+        # Create exercise with empty topic_mappings
+        ex = core.create_exercise("prob-c6", "unmapped_axiom", "State Kolmogorov axioms")
+        ex_ver_id = ex["exercise_version_id"]
+        assert ex["topic_mappings"] == []
+
+        core.validate_exercise_version(
+            ex_ver_id,
+            reference_solution="Non-negativity, unit measure, countable additivity",
+            rubric={"max_points": 10},
+            checks=["checked"],
+        )
+
+        att = core.start_attempt("prob-c6", ex_ver_id)["data"]
+        core.record_attempt_event(att["id"], expected_revision=1, event_type="work_submission", content="Axioms stated")
+        core.commit_evidence(att["id"], evaluations=[{"topic_id": t["id"], "skill_id": "axiom_recall", "correct": True}])
+
+        # Verify topic state has 1 success
+        state_before = core.evidence_repo.get_topic_state("prob-c6", t["id"])
+        assert state_before.independent_success_count == 1
+        assert state_before.unassessed_flag is False
+
+        # Now update exercise version question text -> invalidates evidence
+        core.update_exercise_version(ex_ver_id, question_text="State all three Kolmogorov axioms clearly")
+
+        # Topic state must be recomputed to 0 successes and unassessed_flag=True even though exercise topic_mappings was empty!
+        state_after = core.evidence_repo.get_topic_state("prob-c6", t["id"])
+        assert state_after.independent_success_count == 0
+        assert state_after.unassessed_flag is True
+    finally:
+        core.close()
+
+
+# ==============================================================================
+# CODEX DEFECT 7: Restore synchronization & detached handle detection
+# ==============================================================================
+
+def test_defect_codex_7_restore_synchronization_and_detached_handles(temp_workspace):
+    """Verify exclusive workspace sync prevents restore during active session, and detached handles are detected."""
+    src_ws = temp_workspace / "src_ws"
+    core_src = LumenCore(src_ws)
+    try:
+        core_src.create_course("Source Course", course_id="prob-sync-src")
+        backup_zip = temp_workspace / "sync_backup.zip"
+        core_src.backup(backup_zip)
+    finally:
+        core_src.close()
+
+    dest_ws = temp_workspace / "dest_ws"
+    core_dest = LumenCore(dest_ws)
+    try:
+        core_dest.create_course("Dest Course", course_id="prob-sync-dest")
+
+        # 1. While core_dest is active, restore must be rejected by workspace sync lock
+        with pytest.raises(RestoreIntegrityError, match="actively in use by an active session"):
+            LumenCore.restore(backup_zip, dest_ws, force=True)
+
+        # 2. Detached handle detection: replace database file under active core
+        db_file = dest_ws / "lumen.db"
+        db_file.unlink()
+        db_file.write_bytes(b"corrupted or replaced")
+
+        # Any operation on core_dest must detect that the handle is detached
+        with pytest.raises(WorkspaceDetachedError, match="detached"):
+            core_dest.create_course("Another Course")
+    finally:
+        core_dest.close()
+
+    # 3. After core_dest is closed, restore succeeds cleanly
+    restore_res = LumenCore.restore(backup_zip, dest_ws, force=True)
+    assert restore_res["status"] == "success"
+
+
+# ==============================================================================
+# CODEX DEFECT 8: Assessment coverage separation
+# ==============================================================================
+
+def test_defect_codex_8_assessment_coverage_separation(temp_workspace):
+    """Verify that assessment topic_coverage reflects only assessment items, not course-wide practice."""
+    core = LumenCore(temp_workspace)
+    try:
+        core.create_course("Probability", course_id="prob-c8")
+        t_bayes = core.create_topic("prob-c8", name="Bayes", slug="bayes")
+        t_exp = core.create_topic("prob-c8", name="Expectation", slug="exp")
+
+        # 1. Learner practices Bayes repeatedly in general practice
+        ex_bayes = core.create_exercise("prob-c8", "bayes_prac", "Bayes Practice")
+        core.validate_exercise_version(
+            ex_bayes["exercise_version_id"],
+            reference_solution="0.5",
+            rubric={"max_points": 10},
+            checks=["checked"],
+        )
+        for _ in range(2):
+            att = core.start_attempt("prob-c8", ex_bayes["exercise_version_id"])["data"]
+            core.record_attempt_event(att["id"], expected_revision=1, event_type="work_submission", content="0.5")
+            core.commit_evidence(att["id"], evaluations=[{"topic_id": t_bayes["id"], "skill_id": "bayes_calc", "correct": True}])
+
+        # 2. Create diagnostic covering BOTH Bayes and Expectation, but with an exercise ONLY for Expectation
+        ex_exp = core.create_exercise("prob-c8", "exp_diag", "Expectation Diag")
+        core.validate_exercise_version(
+            ex_exp["exercise_version_id"],
+            reference_solution="3.5",
+            rubric={"max_points": 10},
+            checks=["checked"],
+        )
+
+        diag = core.create_assessment(
+            "prob-c8",
+            "Midterm Diagnostic",
+            blueprint={"topic_ids": [t_bayes["id"], t_exp["id"]]},
+            selected_exercise_version_ids=[ex_exp["exercise_version_id"]],
+        )["data"]
+        diag_id = diag["assessment_id"]
+
+        # Learner attempts and scores Expectation item in the diagnostic
+        item_att = core.start_assessment_item_attempt(diag_id, item_order=1)
+        att_id = item_att["attempt"]["id"]
+        core.record_attempt_event(att_id, expected_revision=1, event_type="work_submission", content="3.5")
+        core.commit_evidence(att_id, evaluations=[{"topic_id": t_exp["id"], "skill_id": "exp_calc", "correct": True}])
+        core.record_assessment_item_score(diag_id, item_order=1, points_awarded=10.0, attempt_id=att_id)
+
+        # 3. Check progress
+        prog = core.assessment_progress(diag_id)
+
+        # Assessment-specific coverage:
+        # Bayes was NOT assessed in this diagnostic (unattempted/no items for it)
+        assert prog["topic_coverage"]["Bayes"]["assessed"] is False
+        assert prog["topic_coverage"]["Bayes"]["independent_successes"] == 0
+
+        # Expectation WAS assessed in this diagnostic
+        assert prog["topic_coverage"]["Expectation"]["assessed"] is True
+        assert prog["topic_coverage"]["Expectation"]["independent_successes"] == 1
+
+        # Course-wide topic coverage:
+        # Both Bayes and Expectation have active evidence across the course
+        assert prog["course_topic_coverage"]["Bayes"]["assessed"] is True
+        assert prog["course_topic_coverage"]["Bayes"]["independent_successes"] == 2
+        assert prog["course_topic_coverage"]["Expectation"]["assessed"] is True
+        assert prog["course_topic_coverage"]["Expectation"]["independent_successes"] == 1
+    finally:
+        core.close()
+
