@@ -34,7 +34,8 @@ This package currently contains planning and instruction files, not an implement
 
 In diagnostics:
 - Use the established start/link/score workflow: start the item attempt (`start_assessment_item_attempt`), record the work submission and commit evaluated evidence, then record the score (`record_assessment_item_score`). Never attempt to score unlinked items or external practice attempts.
-- If explicit relinking is needed, use `link_assessment_item_attempt`, which invalidates previous scores and logs an audit trail.
+- Every confirmed score, including zero, strictly requires applicable completed active evaluated evidence grounded in submitted work. Unevaluated work remains pending; recording a score on unevaluated work is rejected.
+- If explicit relinking is needed, use `link_assessment_item_attempt`. Reaffirming an unchanged attempt link is an idempotent no-op preserving points, evidence, history, and completion status. Linking a genuinely different attempt invalidates previous scores, reopens the assessment, and logs an audit trail.
 - Reuse stable request IDs across retries and respect expected revision counters.
 - Treat pending or unvalidated work as pending review; never treat pending items as validated or scored.
 - Report saving to the learner only after confirmed database persistence.
@@ -44,10 +45,11 @@ In diagnostics:
 
 - Build the current milestone in `plan.md`, with the smallest complete path through its acceptance checks. Do not silently implement deferred scope.
 - Keep storage, retrieval, idempotency, provenance, and assessment computation in the shared core. Adapters translate host execution and file/image access only.
-- Make database changes through versioned migrations. Back up before a migration with material data risk; enable foreign keys on every connection and test restore.
+- Make database changes through versioned migrations. Back up before a migration with material data risk; enable foreign keys on every connection and test restore. Detect and quarantine legacy constraint conflicts (e.g. duplicate attempt links in schema v4) to `backup_v4_assessment_items` and `legacy_duplicate_attempt_links` before unique index creation.
 - Do not hold a database write transaction during model calls or file extraction. Do not sync a live database through Git or shared network folders.
 - Protect authoritative checks and writes together within atomic immediate transactions (`atomic_transaction(self.con)`).
 - Validate verification checks with strict schema: accept only boolean `True` or passing structured check state enum; reject ambiguous strings ('false', 'failed', 'pending'), numbers, and containers.
+- Enforce exact revision and content identity checking on exercise validation (`validate_exercise_version` with `expected_revision` and expected text/solution/rubric) and updates to reject stale concurrent modifications.
 - Release every acquired lock, connection, and file descriptor immediately upon initialization failure to ensure clean restore and recovery.
 - Use indexed, scoped queries and small mutation payloads. Log usage metadata where available without repeatedly summarizing the course.
 - Add meaningful tests for provenance, assistance ordering, corrections, duplicates, cross-course writes, interrupted commits, source version changes, and adapter conformance.

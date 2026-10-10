@@ -74,7 +74,7 @@ This runs an automated end-to-end showcase:
 
 ## Testing
 
-Run the full automated test suite covering all failure scenarios (F01–F36) from `plan.md` and boundary concurrency tests (67 tests passing):
+Run the full automated test suite covering all failure scenarios (F01–F40) from `plan.md`, boundary concurrency tests, and final verification tests (77 tests passing):
 ```bash
 pytest -v
 ```

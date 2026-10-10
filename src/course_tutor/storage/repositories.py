@@ -1,5 +1,6 @@
 """Repositories for database entities with strict validation, revisions, and isolation."""
 
+import hashlib
 import json
 import re
 import sqlite3
@@ -734,6 +735,23 @@ class KnowledgeRepository:
         ]
 
 
+def compute_exercise_version_hash(
+    question_text: str,
+    reference_solution: str = "",
+    rubric: Optional[Dict[str, Any]] = None,
+    subparts: Optional[List[Dict[str, Any]]] = None,
+) -> str:
+    """Compute a deterministic content hash for an exercise version's educational content."""
+    payload = {
+        "question_text": question_text,
+        "reference_solution": reference_solution,
+        "rubric": rubric or {},
+        "subparts": subparts or [],
+    }
+    encoded = json.dumps(payload, sort_keys=True).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 class ExerciseRepository:
     def __init__(self, con: sqlite3.Connection):
         self.con = con
@@ -833,13 +851,54 @@ class ExerciseRepository:
         status: str = "validated",
         reference_solution: Optional[str] = None,
         rubric: Optional[Dict[str, Any]] = None,
+        expected_revision: Optional[int] = None,
+        expected_question_text: Optional[str] = None,
+        expected_reference_solution: Optional[str] = None,
+        expected_rubric: Optional[Dict[str, Any]] = None,
+        expected_content_hash: Optional[str] = None,
     ) -> ExerciseVersion:
-        ex_ver = self.get_exercise_version(version_id)
-        if not ex_ver:
+        initial_ver = self.get_exercise_version(version_id)
+        if not initial_ver:
             raise ValidationError(f"Exercise version '{version_id}' not found.")
 
-        effective_solution = reference_solution if reference_solution is not None else ex_ver.reference_solution
-        effective_rubric = rubric if rubric is not None else ex_ver.rubric
+        initial_revision = len(initial_ver.revision_history) + 1
+        initial_hash = compute_exercise_version_hash(
+            initial_ver.question_text,
+            initial_ver.reference_solution,
+            initial_ver.rubric,
+            initial_ver.subparts,
+        )
+
+        if expected_revision is not None and expected_revision != initial_revision:
+            raise StaleRevisionError(
+                entity_type="ExerciseVersion",
+                entity_id=version_id,
+                expected_revision=expected_revision,
+                current_revision=initial_revision,
+            )
+        if expected_question_text is not None and expected_question_text != initial_ver.question_text:
+            raise ValidationError(
+                f"Exercise version '{version_id}' question text mismatch. Attestation was prepared for a different question text.",
+                details={"expected": expected_question_text, "actual": initial_ver.question_text},
+            )
+        if expected_reference_solution is not None and expected_reference_solution != initial_ver.reference_solution:
+            raise ValidationError(
+                f"Exercise version '{version_id}' reference solution mismatch.",
+                details={"expected": expected_reference_solution, "actual": initial_ver.reference_solution},
+            )
+        if expected_rubric is not None and expected_rubric != initial_ver.rubric:
+            raise ValidationError(
+                f"Exercise version '{version_id}' rubric mismatch.",
+                details={"expected": expected_rubric, "actual": initial_ver.rubric},
+            )
+        if expected_content_hash is not None and expected_content_hash != initial_hash:
+            raise ValidationError(
+                f"Exercise version '{version_id}' content hash mismatch.",
+                details={"expected_hash": expected_content_hash, "actual_hash": initial_hash},
+            )
+
+        effective_solution = reference_solution if reference_solution is not None else initial_ver.reference_solution
+        effective_rubric = rubric if rubric is not None else initial_ver.rubric
 
         # Defect 3: Define explicit verification-check schema and validation
         checks_dict: Dict[str, Any] = {}
@@ -907,6 +966,56 @@ class ExerciseRepository:
             ex_ver = self.get_exercise_version(version_id)
             if not ex_ver:
                 raise ValidationError(f"Exercise version '{version_id}' not found.")
+
+            current_revision = len(ex_ver.revision_history) + 1
+            current_hash = compute_exercise_version_hash(
+                ex_ver.question_text,
+                ex_ver.reference_solution,
+                ex_ver.rubric,
+                ex_ver.subparts,
+            )
+
+            # Defect B: Reject stale attestation if question/solution/rubric was concurrently modified
+            if (
+                current_revision != initial_revision
+                or ex_ver.question_text != initial_ver.question_text
+                or ex_ver.reference_solution != initial_ver.reference_solution
+                or ex_ver.rubric != initial_ver.rubric
+            ):
+                raise StaleRevisionError(
+                    entity_type="ExerciseVersion",
+                    entity_id=version_id,
+                    expected_revision=initial_revision,
+                    current_revision=current_revision,
+                )
+
+            if expected_revision is not None and expected_revision != current_revision:
+                raise StaleRevisionError(
+                    entity_type="ExerciseVersion",
+                    entity_id=version_id,
+                    expected_revision=expected_revision,
+                    current_revision=current_revision,
+                )
+            if expected_question_text is not None and expected_question_text != ex_ver.question_text:
+                raise ValidationError(
+                    f"Exercise version '{version_id}' question text mismatch inside transaction.",
+                    details={"expected": expected_question_text, "actual": ex_ver.question_text},
+                )
+            if expected_reference_solution is not None and expected_reference_solution != ex_ver.reference_solution:
+                raise ValidationError(
+                    f"Exercise version '{version_id}' reference solution mismatch inside transaction.",
+                    details={"expected": expected_reference_solution, "actual": ex_ver.reference_solution},
+                )
+            if expected_rubric is not None and expected_rubric != ex_ver.rubric:
+                raise ValidationError(
+                    f"Exercise version '{version_id}' rubric mismatch inside transaction.",
+                    details={"expected": expected_rubric, "actual": ex_ver.rubric},
+                )
+            if expected_content_hash is not None and expected_content_hash != current_hash:
+                raise ValidationError(
+                    f"Exercise version '{version_id}' content hash mismatch inside transaction.",
+                    details={"expected_hash": expected_content_hash, "actual_hash": current_hash},
+                )
 
             solution_changed = (
                 reference_solution is not None
@@ -980,6 +1089,8 @@ class ExerciseRepository:
                 "checks": checks_dict,
                 "notes": notes,
                 "validated_at": utc_now_iso(),
+                "checked_revision": current_revision,
+                "content_hash": current_hash,
             }
             provenance_json = json.dumps(provenance)
 
@@ -1010,11 +1121,21 @@ class ExerciseRepository:
         question_text: Optional[str] = None,
         reference_solution: Optional[str] = None,
         rubric: Optional[Dict[str, Any]] = None,
+        expected_revision: Optional[int] = None,
     ) -> ExerciseVersion:
         with atomic_transaction(self.con):
             ex_ver = self.get_exercise_version(version_id)
             if not ex_ver:
                 raise ValidationError(f"Exercise version '{version_id}' not found.")
+
+            current_revision = len(ex_ver.revision_history) + 1
+            if expected_revision is not None and expected_revision != current_revision:
+                raise StaleRevisionError(
+                    entity_type="ExerciseVersion",
+                    entity_id=version_id,
+                    expected_revision=expected_revision,
+                    current_revision=current_revision,
+                )
 
             updates = []
             params = []

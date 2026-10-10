@@ -2,7 +2,7 @@
 
 **Date**: 2026-10-10  
 **Repository**: `lumen`  
-**Git Base**: Verified repairs following commit `bd7c52b8665fb68cd776f4d1a7d1c94f170343bb`  
+**Git Base**: Final verification pass following commit `f7fc924507cfc3378c95b405083d871c69d89758`  
 **Author / Implementer**: Antigravity Assistant  
 **Target Recipient**: OpenAI Codex (and continuing engineering agents)
 
@@ -10,52 +10,51 @@
 
 ## 1. Executive Summary & Verified Defect Resolutions
 
-In response to Codex's independent review of commit `bd7c52b8665fb68cd776f4d1a7d1c94f170343bb`, all 6 confirmed boundary defects and related audit workflows have been repaired and verified across 67 automated tests (including 8 dedicated concurrency and boundary tests in `tests/test_boundary_repairs_concurrency.py` and 15 tests in `tests/test_verified_defect_repairs.py`), the CLI capability inspector, and the synthetic probability demo.
+In response to Codex's independent review of baseline commit `f7fc924507cfc3378c95b405083d871c69d89758`, all 4 identified defects (Defect A, Defect B, Defect C, Defect D) and related lifecycle boundary conditions have been repaired and verified across 77 automated tests (including 10 dedicated verification tests in `tests/test_final_verification.py`), the CLI capability inspector, and the synthetic probability demo.
 
-### Third-Round Defect Fixes Implemented
+### Fourth-Round Final Verification Defect Fixes Implemented
 
-1. **Defect 1: Scoring Race with Evidence Retraction**:
-   - Inside `record_assessment_item_score`: all prerequisite validations (attempt linkage, ownership, exercise version validation, work submission, active evaluated evidence) execute together inside an immediate write transaction (`atomic_transaction(self.con)`).
-   - In SQLite with `BEGIN IMMEDIATE`, concurrent retractions and score updates are strictly serialized. If retraction commits first, scoring rejects due to missing active evaluated evidence. If scoring commits first, subsequent retraction reverts the item to `pending_review`, clears awarded points, and logs an audit history entry.
-   - Tested under real multi-connection SQLite concurrency covering both orderings.
+1. **Defect A: Zero Score Without Evaluated Active Evidence Accepted as Scored**:
+   - `record_assessment_item_score` now strictly requires applicable active evaluated evidence for any confirmed score, including zero points awarded (`if not valid_evidence:`).
+   - Unevaluated submissions remain `unassessed` or `pending_review` with assessment status remaining `open`.
+   - Scoring attempts with retracted, pending, foreign, or empty evidence are rejected with `ValidationError` while leaving prior item and assessment state untouched.
+   - Genuine evaluated incorrect work (`demonstrated_level == "incorrect"`) correctly supports a confirmed zero score.
 
-2. **Defect 2: Unlinked Items Accept External Diagnostic Attempts**:
-   - `record_assessment_item_score` strictly requires an existing, persisted attempt link (`item.attempt_id`) before scoring; foreign attempts are rejected.
-   - Attempt exclusivity enforced: Migration 005 adds a partial unique index `idx_assessment_items_unique_attempt` on `assessment_items(attempt_id) WHERE attempt_id IS NOT NULL`.
-   - Explicit `link_assessment_item_attempt` workflow added to core and CLI. Relinking an item to a different attempt invalidates previous scores with an audit trail in `score_history`.
+2. **Defect B: Validation Approves Concurrently Edited Question/Solution/Rubric**:
+   - `validate_exercise_version` accepts `expected_revision`, `expected_question_text`, `expected_reference_solution`, `expected_rubric`, and `expected_content_hash`.
+   - Re-checks exercise version state both before and inside the write transaction. If question text, solution, rubric, or revision counter changed concurrently, raises `StaleRevisionError` or `ValidationError`.
+   - Added `compute_exercise_version_hash` and optimistic revision guarding to `update_exercise_version`. Provenance records checked revision and content hash.
 
-3. **Defect 3: Failed-Check Strings Validate Questions**:
-   - `validate_exercise_version` strictly defines and enforces check schemas. Ambiguous strings (`"false"`, `"failed"`, `"pending"`, `"0"`), numbers, and containers are strictly rejected.
-   - Boolean checks require actual `True` for passing; boolean `False` raises `ValidationError`.
-   - Structured check dictionaries require a passing status enum (`passed`, `verified`, `ok`, `success`); statuses like `failed` or `pending` raise `ValidationError`.
-   - Points awarded validated as finite numeric values (`isfinite`), rejecting booleans, NaN, and Inf.
-   - Failed validation leaves database state completely untouched.
+3. **Defect C: Reaffirming Unchanged Attempt Link Erases Valid Score and Reopens Assessment**:
+   - In `link_assessment_item_attempt`: if the assessment item is already linked to the target attempt (`item.attempt_id == attempt_id`), reaffirming the link is an idempotent no-op.
+   - Returns a reaffirmed receipt (`reaffirmed=True`) without clearing awarded points, resetting `score_status`, or reopening a completed assessment.
+   - Genuinely different attempt links still clear the prior score, reopen the assessment, and log an audit trail entry in `score_history`.
 
-4. **Defect 4: Later Assistance Alters Diagnostic Report**:
-   - `get_progress` determines `performance_classification` strictly based on evaluated submissions and preceding assistance (`event_index <= sub_idx`).
-   - Post-submission hints or solutions are recorded as attempt exposure (`exposure["assistance_after_submission"] = True`) without downgrading prior independent mastery (`"independent"`).
-   - Multi-subpart items with mixed independent and assisted subparts report `"mixed"` with item-level `subpart_evaluations`.
+4. **Defect D: Migration Fails on Legacy Schema-v4 Workspace with Duplicate Attempt Links**:
+   - In `run_migrations`: pre-migration detection inspects `assessment_items` before Migration 005 applies `CREATE UNIQUE INDEX idx_assessment_items_unique_attempt`.
+   - Safely creates `backup_v4_assessment_items` preserving original rows byte-for-byte.
+   - Populates audit table `legacy_duplicate_attempt_links` and quarantines conflicting active links (`attempt_id=NULL`, `score_status='pending_review'`), logs audit history entries, and safely reopens affected assessments.
+   - If `auto_quarantine_duplicates=False`, raises actionable structured error `LegacyDuplicateAttemptLinkError`.
+   - Added `repair_legacy_duplicate_links` core method and CLI command (`lumen repair-legacy-duplicate-links`) to inspect and resolve quarantined links.
 
-5. **Defect 5: Failed Item Startup Commits Learner Ownership**:
-   - `start_assessment_item_attempt` wraps validation and ownership assignment inside `atomic_transaction(self.con)`.
-   - Assessment existence, item existence, and exercise version validation checks execute before assigning `assessment.learner_id`.
-   - A failed start operation (e.g. nonexistent item 999) rolls back completely, preserving unowned assessments for subsequent learners.
+5. **Lifecycle Boundaries and Invariants (RISK-01 – RISK-05)**:
+   - Validated `item_order` (strict `int`, rejecting `bool`, `float`, `<= 0`) and `learner_id` (non-empty string) across assessment workflows.
+   - Cross-course validation prevents attaching exercise versions or blueprint topics from external courses.
+   - Duplicate exercise versions in assessment creation are rejected.
+   - Assistance chronology verifies that post-submission assistance does not overwrite earlier independent work and records `assistance_after_submission: True`.
 
-6. **Defect 6: Failed Initialization Leaks Workspace Lock**:
-   - `LumenCore.__init__` wraps initialization in `try...except`, releasing the workspace sync lock and closing the SQLite connection on any failure.
-   - `get_connection` safely closes connections if PRAGMA execution fails.
-   - `_check_db_not_locked` in restore safely catches `DatabaseError`, allowing forced restore over corrupted workspaces without false lock rejections.
-   - Verified zero file descriptor leaks across repeated initialization failures.
+### Prior Defect Fixes Retained (from Commits 733e738, bd7c52b, and f7fc924)
 
-### Prior Defect Fixes Retained (from Commits 733e738 and bd7c52b)
-
+- Scoring/retraction race serialization in `atomic_transaction` (BEGIN IMMEDIATE).
+- Unlinked item scoring rejection and attempt exclusivity.
+- Strict verification check schema (rejecting 'false', 'failed', 'pending', numbers).
+- Timeline assistance preservation and mixed subparts reporting.
+- Atomic assessment item startup preserving unowned assessments on error.
+- Exception-safe `LumenCore` init with zero lock/FD leaks and clean restore.
 - Python compatibility across supported versions (3.10–3.14).
 - Subpart assistance bypass prevention.
-- Assessment scoring binding and deduplication.
-- Question validation rechecks and atomic snapshots.
 - Topic-state recomputation from invalidated evidence.
 - External restore synchronization via `fcntl.flock` outside the workspace directory.
-- Assessment coverage separation (`topic_coverage` vs `course_topic_coverage`).
 
 ---
 
@@ -70,9 +69,9 @@ python3 -m venv .venv
 .venv/bin/lumen capabilities
 # Output: {"status": "success", "data": {"contract_version": "1.0.0", "runtime": {"fts5_supported": true}, ...}}
 
-# 3. Full automated test suite (67/67 passed)
+# 3. Full automated test suite (77/77 passed)
 .venv/bin/pytest -v
-# Output: 67 passed in 2.42s
+# Output: 77 passed in 2.76s
 
 # 4. Standalone synthetic probability course demonstration
 .venv/bin/python demo.py
@@ -87,7 +86,18 @@ python3 -m venv .venv
 
 ## 3. Test Suite Breakdown
 
-All 67 automated test cases pass cleanly:
+All 77 automated test cases pass cleanly:
+- `tests/test_final_verification.py` (10 tests):
+  - Defect A: Zero score strictly requires active evaluated evidence; unevaluated work stays pending.
+  - Defect A: Rollback state preservation on rejected scores.
+  - Defect B: Question validation rejects concurrently edited question text, solutions, and rubrics.
+  - Defect B: Solution and rubric changes require exact expected revision.
+  - Defect C: Reaffirming unchanged attempt link is an idempotent no-op preserving points, evidence, history, and status.
+  - Defect D: Legacy schema-v4 workspace migration detects duplicate attempt links, creates backup table `backup_v4_assessment_items`, logs audit table `legacy_duplicate_attempt_links`, quarantines to `pending_review`, and allows repair.
+  - Lifecycle boundaries: `item_order` strict integer type checking and non-empty `learner_id`.
+  - Cross-course and duplicate assessment creation prevention.
+  - Assistance chronology: post-submission assistance does not overwrite earlier independent work and records `assistance_after_submission: True`.
+  - CLI update and repair commands.
 - `tests/test_boundary_repairs_concurrency.py` (8 tests):
   - Multi-connection concurrency between scoring and retraction (Orderings A and B).
   - Unlinked item scoring rejection, cross-attempt isolation, attempt exclusivity (Migration 005), and relink audit.

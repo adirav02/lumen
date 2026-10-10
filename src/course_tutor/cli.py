@@ -261,6 +261,27 @@ def main(argv: Optional[List[str]] = None) -> None:
                         validation_state=payload.get("validation_state", "validated"),
                         reference_solution=payload.get("reference_solution"),
                         rubric=payload.get("rubric"),
+                        expected_revision=payload.get("expected_revision"),
+                        expected_question_text=payload.get("expected_question_text"),
+                        expected_reference_solution=payload.get("expected_reference_solution"),
+                        expected_rubric=payload.get("expected_rubric"),
+                        expected_content_hash=payload.get("expected_content_hash"),
+                    )
+                    output_json({"status": "success", "data": res})
+
+                elif op == "update_exercise_version":
+                    res = core.update_exercise_version(
+                        version_id=payload["version_id"],
+                        question_text=payload.get("question_text"),
+                        reference_solution=payload.get("reference_solution"),
+                        rubric=payload.get("rubric"),
+                        expected_revision=payload.get("expected_revision"),
+                    )
+                    output_json({"status": "success", "data": res})
+
+                elif op == "repair_legacy_duplicate_links":
+                    res = core.repair_legacy_duplicate_links(
+                        resolved_assignments=payload.get("resolved_assignments"),
                     )
                     output_json({"status": "success", "data": res})
 

@@ -53,14 +53,25 @@ class DiagnosticService:
             status="open",
         )
 
+        if blueprint and isinstance(blueprint, dict) and "topic_ids" in blueprint:
+            for tid in blueprint.get("topic_ids", []):
+                t = self.topic_repo.get_topic(tid)
+                if t and t.course_id != course_id:
+                    raise CrossCourseViolationError("Topic", tid, course_id, t.course_id)
+
         items: List[AssessmentItem] = []
         item_order = 1
 
         if selected_exercise_version_ids:
+            if len(selected_exercise_version_ids) != len(set(selected_exercise_version_ids)):
+                raise ValidationError("Duplicate exercise versions in selected_exercise_version_ids are not allowed.")
+
             for ex_ver_id in selected_exercise_version_ids:
                 ex_ver = self.exercise_repo.get_exercise_version(ex_ver_id)
                 if not ex_ver:
                     raise ValidationError(f"Exercise version '{ex_ver_id}' not found.")
+                if ex_ver.course_id != course_id:
+                    raise CrossCourseViolationError("ExerciseVersion", ex_ver_id, course_id, ex_ver.course_id)
                 # F12: strictly disallow unvalidated or contradictory questions in diagnostic
                 if ex_ver.validation_state != "validated":
                     raise UnvalidatedQuestionError(ex_ver_id, ex_ver.validation_state)
@@ -177,6 +188,12 @@ class DiagnosticService:
         learner_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Explicitly and safely link or relink an attempt to an assessment item with full validation and audit tracking."""
+        if isinstance(item_order, bool) or not isinstance(item_order, int) or item_order < 1:
+            raise ValidationError(f"Invalid item order: {item_order!r}.")
+
+        if learner_id is not None and (not isinstance(learner_id, str) or not learner_id.strip()):
+            raise ValidationError(f"Learner ID must be a non-empty string, got {learner_id!r}.")
+
         with atomic_transaction(self.con):
             assessment = self.assessment_repo.get_assessment(assessment_id)
             if not assessment:
@@ -202,7 +219,7 @@ class DiagnosticService:
                 raise ValidationError(f"Attempt '{attempt_id}' has mode '{attempt.mode}', expected 'diagnostic'.")
 
             # Check learner ownership
-            resolved_learner = learner_id or attempt.learner_id
+            resolved_learner = (learner_id.strip() if learner_id else None) or attempt.learner_id
             if assessment.learner_id and assessment.learner_id != resolved_learner:
                 raise ValidationError(f"Learner mismatch: assessment '{assessment.learner_id}' vs attempt '{resolved_learner}'.")
             if item.learner_id and item.learner_id != resolved_learner:
@@ -215,6 +232,23 @@ class DiagnosticService:
             ).fetchall()
             if other:
                 raise ValidationError(f"Attempt '{attempt_id}' is already linked to another assessment item ({other[0]['id']}).")
+
+            # Defect C: Reaffirming an unchanged link is an idempotent no-op.
+            # Preserve score, history, evidence references, ownership, and status.
+            if item.attempt_id == attempt_id:
+                if not assessment.learner_id:
+                    self.assessment_repo.update_assessment_learner(assessment_id, resolved_learner)
+                return {
+                    "assessment_id": assessment_id,
+                    "item_order": item_order,
+                    "attempt_id": attempt_id,
+                    "learner_id": resolved_learner,
+                    "reaffirmed": True,
+                    "score_status": item.score_status,
+                    "points_awarded": item.points_awarded,
+                    "score_history": item.score_history,
+                    "evidence_ids": item.evidence_ids,
+                }
 
             # If item was scored, relinking invalidates the previous score
             score_history = list(item.score_history)
@@ -363,10 +397,11 @@ class DiagnosticService:
             submission_event_ids = {ws.id for ws in work_submissions}
             valid_evidence = [e for e in active_evidence if e.event_id in submission_event_ids]
 
-            if points_awarded > 0 and not valid_evidence:
+            # Defect A: Every confirmed score (including zero) requires active evaluated evidence
+            if not valid_evidence:
                 raise ValidationError(
                     f"Attempt '{linked_attempt_id}' has no active evaluated evidence linked to committed work submissions. "
-                    "Cannot award positive score without valid active evidence."
+                    "Cannot award score without valid active evidence."
                 )
 
             ev_ids = [e.id for e in valid_evidence]

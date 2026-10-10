@@ -203,6 +203,7 @@ All runtime milestones below are initially pending. This document package is the
 | M4 — Diagnostic and practice selection | Coverage blueprints, checked questions/rubrics, resumable assessments, and transparent reports | Missing coverage/exposure/uncertainty remain visible; no unvalidated reference changes learner state |
 | M5 — Three-host conformance and measured efficiency | Real-host smoke tests, cross-host resume, held-out educational evaluations, and usage reporting | All required hosts pass the declared feature matrix, or the release explicitly remains partial; costs and accuracy are reported together |
 | M6 — Correctness and reliability repair pass | Scoring/retraction race prevention, item-to-attempt linkage/exclusivity (Migration 005), strict check schema validation, timeline assistance preservation, atomic item startup, exception-safe lock release, and CI Python matrix (3.10–3.14) | Multi-connection concurrency tests, foreign attempt rejection, strict verification tests, timeline assistance tests, zero lock/FD leak on failure, and clean restore recovery all pass |
+| M7 — Final correctness and reliability verification pass | Active evaluated evidence requirement for confirmed scores (including zero), question/solution/rubric validation revision & content identity check, idempotent attempt link reaffirmation, and schema-v4 legacy migration quarantine with backup table & audit trail | 10 dedicated verification tests pass (`tests/test_final_verification.py`), full 77-test regression suite passes, capabilities inspector and synthetic demo pass cleanly |
 
 M0 includes minimal discovery early, so environment incompatibility is not discovered only after the tutor is built. M5 establishes complete integration, not a guarantee that different models make identical judgments.
 
@@ -250,6 +251,10 @@ These are tests to implement or review, not tests already passed.
 | F34 | Assistance requested after independent submission | Maintain independent classification for earlier evaluated submission; record subsequent assistance as exposure without rewriting score |
 | F35 | Failed item startup on unowned assessment | Keep ownership assignment, validation, and linking atomic; leave assessment unowned when startup raises ValidationError |
 | F36 | Initialization failure in workspace session | Exception-safe cleanup releases locks, closes connections, and leaves zero descriptor leaks, enabling immediate restore |
+| F37 | Zero score without active evaluated evidence | Scoring strictly requires active evaluated evidence for any confirmed score, including zero; unevaluated work stays pending |
+| F38 | Validation approves concurrently edited question | Validation attestation identifies exact question/solution/rubric revision and content identity; rejects stale attestations |
+| F39 | Reaffirming unchanged attempt link erases score | Reaffirming unchanged link is an idempotent no-op preserving points, evidence, history, and completion status |
+| F40 | Migration on schema-v4 workspace with duplicate attempt links | Pre-migration detection backs up to `backup_v4_assessment_items`, audits duplicates into `legacy_duplicate_attempt_links`, quarantines to `pending_review`, and allows clean Migration 005 |
 
 Use small deterministic fixtures for storage guarantees and reviewed real examples for educational correctness. Validate the reasoning and required assumptions, not only the final numeric answer.
 

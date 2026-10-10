@@ -57,16 +57,17 @@ Live multi-device synchronization, a custom chat client, a hosted multi-user ser
 
 ## Explicit product guarantees
 
-1. **Attempt and Evidence Binding**: Confirmed assessment scores require an explicitly linked, owned attempt and applicable active evaluated evidence. Scoring cannot adopt unlinked or external attempts.
+1. **Attempt and Evidence Binding**: Confirmed assessment scores require an explicitly linked, owned attempt and applicable active evaluated evidence. Scoring cannot adopt unlinked or external attempts. Every confirmed score, including zero, strictly requires applicable completed active evaluated evidence grounded in submitted work; unevaluated work remains pending.
 2. **Transaction and Publication Atomicity**: Validation and publication cannot race into inconsistent learner state. State mutations and operation receipts commit together within atomic immediate transactions.
 3. **Rollback on Failure**: Failed mutations leave authoritative state completely unchanged. Pre-mutation states, learner ownership, and revisions are preserved when validation fails.
 4. **Timeline-Aware Assistance Preservation**: Earlier independent work remains independent despite later assistance. Post-submission hints or solutions are recorded as exposure history but never rewrite prior independent mastery.
 5. **Strict Verification Check Types**: Verification checks have explicit validated types (boolean `True` or passing structured check state enum). Ambiguous strings, numeric truthiness, and containers are strictly rejected.
 6. **Exception-Safe Resource Lifecycle**: Initialization failures release every acquired resource (database connections, workspace file locks, file descriptors) immediately to enable clean recovery and restore.
 7. **Deterministic Correction Propagation**: Retracting or superseding evidence propagates immediately to item scores, topic coverage, and topic state projections, reverting affected items to pending review and retaining an immutable audit trail.
-8. **Traceable Educational Revisions**: Historical educational content, questions, rubrics, and evaluations remain traceable across version updates via snapshot history; active evidence linked to outdated revisions is invalidated.
-9. **Idempotency and Concurrency Definition**: Stable request IDs guarantee idempotent replays for identical intents and explicit conflict errors for divergent intents. Optimistic revision guards reject stale concurrent writes.
+8. **Traceable Educational Revisions and Exact Validation Identity**: Historical educational content, questions, rubrics, and evaluations remain traceable across version updates via snapshot history; active evidence linked to outdated revisions is invalidated. Validation attestations identify and verify the exact question, reference solution, and rubric revision and content identity checked, rejecting stale attestations if concurrent edits occurred.
+9. **Idempotency and Concurrency Definition**: Stable request IDs guarantee idempotent replays for identical intents and explicit conflict errors for divergent intents. Optimistic revision guards reject stale concurrent writes. Reaffirming an unchanged attempt link on an assessment item is an idempotent no-op that preserves existing scores, history, evidence, and status.
 10. **Evidence-Based Runtime Reporting**: Supported runtimes, operating systems, and host integrations are reported honestly according to verified evidence. Platforms lacking flock exclusion explicitly report locking as unsupported.
+11. **Safe Legacy Schema Migration and Quarantine**: Upgrades detect legacy constraint ambiguities (e.g. duplicate attempt links in schema v4) prior to applying unique indexes, preserving pre-migration backups, auditing ambiguous records into quarantine tables with pending-review status, and providing deterministic repair paths without data loss.
 
 ## Release evidence
 

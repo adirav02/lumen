@@ -1,7 +1,10 @@
 """Database migrations runner and schema definition."""
 
+from datetime import datetime, timezone
+import json
 import sqlite3
-from typing import List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+from ..errors import LegacyDuplicateAttemptLinkError, ValidationError
 from .db import atomic_transaction
 
 MIGRATION_V1_SQL = """
@@ -318,7 +321,242 @@ def _execute_sql_script(con: sqlite3.Connection, sql: str) -> None:
         con.execute(stmt)
 
 
-def run_migrations(con: sqlite3.Connection) -> None:
+def detect_legacy_duplicate_attempt_links(con: sqlite3.Connection) -> List[Dict[str, Any]]:
+    """Detect whether assessment_items contains duplicate non-null attempt links."""
+    table_exists = con.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='assessment_items'"
+    ).fetchone()
+    if not table_exists:
+        return []
+
+    rows = con.execute(
+        """
+        SELECT attempt_id, COUNT(*) as cnt
+        FROM assessment_items
+        WHERE attempt_id IS NOT NULL
+        GROUP BY attempt_id
+        HAVING COUNT(*) > 1
+        """
+    ).fetchall()
+
+    duplicates = []
+    for r in rows:
+        att_id = r[0]
+        cnt = r[1]
+        items = con.execute(
+            """
+            SELECT id, assessment_id, item_order, exercise_version_id, learner_id,
+                   points_awarded, score_status, score_history_json, evidence_ids_json
+            FROM assessment_items
+            WHERE attempt_id = ?
+            ORDER BY item_order ASC
+            """,
+            (att_id,),
+        ).fetchall()
+        duplicates.append({
+            "attempt_id": att_id,
+            "count": cnt,
+            "items": [dict(it) for it in items],
+        })
+    return duplicates
+
+
+def quarantine_legacy_duplicate_attempt_links(con: sqlite3.Connection) -> Dict[str, Any]:
+    """Quarantine duplicate legacy attempt links before Migration 005.
+
+    Preserves conflicting historical relationships in legacy_duplicate_attempt_links,
+    backs up assessment_items, quaranatines active links to pending_review, and reopens assessments.
+    """
+    duplicates = detect_legacy_duplicate_attempt_links(con)
+    if not duplicates:
+        return {"quarantined_count": 0, "quarantined_attempts": [], "quarantined_items": []}
+
+    # 1. Back up before material repair
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS backup_v4_assessment_items AS
+        SELECT * FROM assessment_items;
+        """
+    )
+
+    # 2. Audit table for legacy duplicate attempt links
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS legacy_duplicate_attempt_links (
+            id TEXT PRIMARY KEY,
+            attempt_id TEXT NOT NULL,
+            assessment_item_id TEXT NOT NULL,
+            assessment_id TEXT NOT NULL,
+            item_order INTEGER NOT NULL,
+            exercise_version_id TEXT NOT NULL,
+            learner_id TEXT,
+            points_awarded REAL,
+            score_status TEXT,
+            evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+            score_history_json TEXT NOT NULL DEFAULT '[]',
+            quarantined_at TEXT NOT NULL,
+            resolution_status TEXT NOT NULL DEFAULT 'quarantined',
+            resolution_notes TEXT NOT NULL DEFAULT ''
+        );
+        """
+    )
+
+    quarantined_attempts = []
+    quarantined_items = []
+    now = datetime.now(timezone.utc).isoformat()
+
+    for dup in duplicates:
+        att_id = dup["attempt_id"]
+        quarantined_attempts.append(att_id)
+        for item in dup["items"]:
+            item_id = item["id"]
+            quarantined_items.append(item_id)
+
+            # Insert into audit table
+            con.execute(
+                """
+                INSERT OR REPLACE INTO legacy_duplicate_attempt_links (
+                    id, attempt_id, assessment_item_id, assessment_id, item_order,
+                    exercise_version_id, learner_id, points_awarded, score_status,
+                    evidence_ids_json, score_history_json, quarantined_at,
+                    resolution_status, resolution_notes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'quarantined', ?)
+                """,
+                (
+                    f"{att_id}_{item_id}",
+                    att_id,
+                    item_id,
+                    item["assessment_id"],
+                    item["item_order"],
+                    item["exercise_version_id"],
+                    item.get("learner_id"),
+                    item.get("points_awarded"),
+                    item.get("score_status"),
+                    item.get("evidence_ids_json") or "[]",
+                    item.get("score_history_json") or "[]",
+                    now,
+                    f"Quarantined due to duplicate legacy attempt link with attempt {att_id}",
+                ),
+            )
+
+            # Prepare updated score history
+            try:
+                hist = json.loads(item.get("score_history_json") or "[]")
+            except Exception:
+                hist = []
+            hist.append({
+                "action": "quarantined_legacy_duplicate_attempt_link",
+                "quarantined_attempt_id": att_id,
+                "previous_points": item.get("points_awarded"),
+                "previous_score_status": item.get("score_status"),
+                "reason": "Legacy schema-v4 duplicate attempt link quarantined during migration to enforce attempt exclusivity. Preserved in legacy_duplicate_attempt_links table.",
+                "recorded_at": now,
+            })
+
+            # Update assessment_items: clear attempt_id, reset to pending_review
+            con.execute(
+                """
+                UPDATE assessment_items SET
+                    attempt_id = NULL,
+                    points_awarded = NULL,
+                    score_status = 'pending_review',
+                    evidence_ids_json = '[]',
+                    score_history_json = ?
+                WHERE id = ?
+                """,
+                (json.dumps(hist), item_id),
+            )
+
+            # Reopen the assessment
+            con.execute(
+                "UPDATE assessments SET status = 'open' WHERE id = ?",
+                (item["assessment_id"],),
+            )
+
+    return {
+        "quarantined_count": len(quarantined_items),
+        "quarantined_attempts": quarantined_attempts,
+        "quarantined_items": quarantined_items,
+    }
+
+
+def repair_legacy_duplicate_links(
+    con: sqlite3.Connection,
+    resolved_assignments: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    """Actionable repair path for quarantined legacy duplicate attempt links."""
+    with atomic_transaction(con):
+        table_exists = con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='legacy_duplicate_attempt_links'"
+        ).fetchone()
+        if not table_exists:
+            return {"resolved": [], "unresolved": []}
+
+        resolved_list = []
+        if resolved_assignments:
+            now = datetime.now(timezone.utc).isoformat()
+            for att_id, item_id in resolved_assignments.items():
+                record = con.execute(
+                    "SELECT * FROM legacy_duplicate_attempt_links WHERE attempt_id = ? AND assessment_item_id = ?",
+                    (att_id, item_id),
+                ).fetchone()
+                if not record:
+                    raise ValidationError(
+                        f"Attempt '{att_id}' and item '{item_id}' not found in quarantined legacy duplicate links."
+                    )
+                # Read item score history
+                it = con.execute("SELECT score_history_json FROM assessment_items WHERE id = ?", (item_id,)).fetchone()
+                try:
+                    hist = json.loads(it[0]) if it and it[0] else []
+                except Exception:
+                    hist = []
+                hist.append({
+                    "action": "resolved_legacy_duplicate_link",
+                    "attempt_id": att_id,
+                    "reason": f"Explicit legacy duplicate link resolution assigning attempt to item {item_id}",
+                    "recorded_at": now,
+                })
+                con.execute(
+                    """
+                    UPDATE assessment_items SET
+                        attempt_id = ?,
+                        score_status = 'pending_review',
+                        score_history_json = ?
+                    WHERE id = ?
+                    """,
+                    (att_id, json.dumps(hist), item_id),
+                )
+                con.execute(
+                    """
+                    UPDATE legacy_duplicate_attempt_links SET
+                        resolution_status = 'resolved',
+                        resolution_notes = ?
+                    WHERE attempt_id = ? AND assessment_item_id = ?
+                    """,
+                    (f"Assigned to assessment item {item_id}", att_id, item_id),
+                )
+                con.execute(
+                    """
+                    UPDATE legacy_duplicate_attempt_links SET
+                        resolution_status = 'quarantined_unlinked',
+                        resolution_notes = ?
+                    WHERE attempt_id = ? AND assessment_item_id != ?
+                    """,
+                    (f"Unlinked because attempt was assigned to {item_id}", att_id, item_id),
+                )
+                resolved_list.append({"attempt_id": att_id, "assessment_item_id": item_id})
+
+        remaining = con.execute(
+            "SELECT attempt_id, assessment_item_id FROM legacy_duplicate_attempt_links WHERE resolution_status = 'quarantined'"
+        ).fetchall()
+
+        return {
+            "resolved": resolved_list,
+            "unresolved": [dict(r) for r in remaining],
+        }
+
+
+def run_migrations(con: sqlite3.Connection, auto_quarantine_duplicates: bool = True) -> None:
     """Ensure schema_migrations exists and apply any pending migrations in order."""
     with atomic_transaction(con):
         con.execute(
@@ -336,6 +574,22 @@ def run_migrations(con: sqlite3.Connection) -> None:
 
         for version, desc, sql in MIGRATIONS:
             if version not in applied_versions:
+                if version == 5:
+                    duplicates = detect_legacy_duplicate_attempt_links(con)
+                    if duplicates:
+                        if not auto_quarantine_duplicates:
+                            dup_ids = [d["attempt_id"] for d in duplicates]
+                            all_item_ids = [it["id"] for d in duplicates for it in d["items"]]
+                            raise LegacyDuplicateAttemptLinkError(
+                                duplicate_attempt_ids=dup_ids,
+                                affected_items=all_item_ids,
+                                details={
+                                    "reason": "Legacy schema-v4 workspace contains duplicate attempt links in assessment items. Auto-quarantine disabled.",
+                                    "duplicates": duplicates,
+                                },
+                            )
+                        quarantine_legacy_duplicate_attempt_links(con)
+
                 _execute_sql_script(con, sql)
                 con.execute(
                     "INSERT INTO schema_migrations (version, applied_at, description) VALUES (?, datetime('now'), ?)",

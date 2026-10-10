@@ -165,3 +165,26 @@ class WorkspaceDetachedError(LumenError):
             error_code="WORKSPACE_DETACHED",
             details={"workspace_path": workspace_path, "reason": reason},
         )
+
+
+class LegacyDuplicateAttemptLinkError(LumenError):
+    """Raised when a legacy schema-v4 workspace contains duplicate attempt links in assessment items."""
+
+    def __init__(
+        self,
+        duplicate_attempt_ids: list,
+        affected_items: list,
+        details: Optional[Dict[str, Any]] = None,
+    ):
+        d = {
+            "duplicate_attempt_ids": duplicate_attempt_ids,
+            "affected_items": affected_items,
+        }
+        if details:
+            d.update(details)
+        super().__init__(
+            f"Found {len(duplicate_attempt_ids)} legacy duplicate attempt link(s) across {len(affected_items)} assessment items. "
+            "Manual resolution required or run repair_legacy_duplicate_links before migration.",
+            error_code="LEGACY_DUPLICATE_ATTEMPT_LINK",
+            details=d,
+        )

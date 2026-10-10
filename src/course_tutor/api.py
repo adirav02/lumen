@@ -26,7 +26,7 @@ from .retrieval.read import read_source_region, read_units
 from .retrieval.search import SearchService
 from .storage.db import atomic_transaction, get_connection
 from .storage.file_store import FileStore
-from .storage.migrations import run_migrations
+from .storage.migrations import repair_legacy_duplicate_links, run_migrations
 from .storage.repositories import (
     AssessmentRepository,
     AttemptRepository,
@@ -612,7 +612,7 @@ class LumenCore:
         self,
         course_id: str,
         title: str,
-        blueprint: Dict[str, Any],
+        blueprint: Optional[Dict[str, Any]] = None,
         selected_exercise_version_ids: Optional[List[str]] = None,
         learner_id: Optional[str] = None,
         request_id: Optional[str] = None,
@@ -620,7 +620,7 @@ class LumenCore:
         params = {
             "course_id": course_id,
             "title": title,
-            "blueprint": blueprint,
+            "blueprint": blueprint or {},
             "selected_exercise_version_ids": selected_exercise_version_ids or [],
             "learner_id": learner_id,
         }
@@ -645,6 +645,11 @@ class LumenCore:
         validation_state: str = "validated",
         reference_solution: Optional[str] = None,
         rubric: Optional[Dict[str, Any]] = None,
+        expected_revision: Optional[int] = None,
+        expected_question_text: Optional[str] = None,
+        expected_reference_solution: Optional[str] = None,
+        expected_rubric: Optional[Dict[str, Any]] = None,
+        expected_content_hash: Optional[str] = None,
     ) -> Dict[str, Any]:
         self._verify_not_detached()
         ver = self.exercise_repo.validate_exercise_version(
@@ -655,6 +660,11 @@ class LumenCore:
             status=validation_state,
             reference_solution=reference_solution,
             rubric=rubric,
+            expected_revision=expected_revision,
+            expected_question_text=expected_question_text,
+            expected_reference_solution=expected_reference_solution,
+            expected_rubric=expected_rubric,
+            expected_content_hash=expected_content_hash,
         )
         return ver.to_dict()
 
@@ -664,6 +674,7 @@ class LumenCore:
         question_text: Optional[str] = None,
         reference_solution: Optional[str] = None,
         rubric: Optional[Dict[str, Any]] = None,
+        expected_revision: Optional[int] = None,
     ) -> Dict[str, Any]:
         self._verify_not_detached()
         with atomic_transaction(self.con):
@@ -672,6 +683,7 @@ class LumenCore:
                 question_text=question_text,
                 reference_solution=reference_solution,
                 rubric=rubric,
+                expected_revision=expected_revision,
             )
             for t_id in ver.topic_mappings:
                 self.evidence_repo.recompute_topic_state(ver.course_id, t_id)
@@ -788,3 +800,24 @@ class LumenCore:
         force: bool = False,
     ) -> Dict[str, Any]:
         return restore_workspace(backup_path, target_workspace, force=force)
+
+    def get_quarantined_legacy_duplicate_links(self) -> List[Dict[str, Any]]:
+        """Retrieve audit records for quarantined legacy duplicate attempt links."""
+        self._verify_not_detached()
+        table_exists = self.con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='legacy_duplicate_attempt_links'"
+        ).fetchone()
+        if not table_exists:
+            return []
+        rows = self.con.execute(
+            "SELECT * FROM legacy_duplicate_attempt_links ORDER BY quarantined_at ASC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def repair_legacy_duplicate_links(
+        self,
+        resolved_assignments: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """Resolve quarantined legacy duplicate attempt links with explicit assignments."""
+        self._verify_not_detached()
+        return repair_legacy_duplicate_links(self.con, resolved_assignments=resolved_assignments)
