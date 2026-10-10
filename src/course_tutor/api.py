@@ -761,6 +761,7 @@ class LumenCore:
         item_order: int,
         points_awarded: float,
         attempt_id: Optional[str] = None,
+        allow_partial: bool = False,
         request_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         self._verify_not_detached()
@@ -770,12 +771,14 @@ class LumenCore:
                 item_order=item_order,
                 points_awarded=points_awarded,
                 attempt_id=attempt_id,
+                allow_partial=allow_partial,
             )
         params = {
             "assessment_id": assessment_id,
             "item_order": item_order,
             "points_awarded": float(points_awarded) if isinstance(points_awarded, (int, float)) and not isinstance(points_awarded, bool) else points_awarded,
             "attempt_id": attempt_id,
+            "allow_partial": allow_partial,
         }
 
         def _do():
@@ -784,6 +787,7 @@ class LumenCore:
                 item_order=item_order,
                 points_awarded=points_awarded,
                 attempt_id=attempt_id,
+                allow_partial=allow_partial,
             )
 
         return self._execute_idempotent(request_id, "record_assessment_item_score", None, params, _do)
@@ -817,7 +821,13 @@ class LumenCore:
     def repair_legacy_duplicate_links(
         self,
         resolved_assignments: Optional[Dict[str, str]] = None,
+        expected_link_states: Optional[Dict[str, Optional[str]]] = None,
     ) -> Dict[str, Any]:
         """Resolve quarantined legacy duplicate attempt links with explicit assignments."""
         self._verify_not_detached()
-        return repair_legacy_duplicate_links(self.con, resolved_assignments=resolved_assignments)
+        return repair_legacy_duplicate_links(
+            self.con,
+            resolved_assignments=resolved_assignments,
+            expected_link_states=expected_link_states,
+        )
+

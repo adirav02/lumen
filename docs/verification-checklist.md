@@ -2,18 +2,26 @@
 
 **Date**: 2026-10-10  
 **Environment**: Linux / Python 3.14.8 & 3.10–3.14 CI / SQLite 3.51.2 (WAL & FTS5)  
-**Status**: Authoritative verification contract for Lumen correctness, reliability, and concurrency.
+**Status**: Authoritative verification contract for Lumen correctness, reliability, concurrency, and underlying invariants (93 automated tests passing).
 
 ---
 
 ## 1. Verification Categorization & Precedence
 
-1. **Confirmed Defects Reproduced by Codex**:
+1. **Underlying Invariants Repaired (M9)**:
+   - `INV-01`: Legacy NULL identity resolution & quarantine via Migration 007 and commit rejection.
+   - `INV-02`: Correction cannot revive obsolete evidence to active status; topic states, briefs, and reports exclude obsolete evidence.
+   - `INV-03`: Observation evidence does not count as assessed topic coverage.
+   - `INV-04`: Incomplete subpart evaluation cannot complete question; requires all required subparts or `allow_partial=True` for `partially_scored`.
+   - `INV-05`: Stale legacy repair rejected with `ConflictError`; `expected_link_states` enforced.
+   - `INV-06`: Non-finite values rejected in verification checks, nested metadata, and CLI input/output.
+2. **Confirmed Defects Reproduced by Codex**:
    - `DEFECT-A`: Zero score accepted without evaluated evidence.
    - `DEFECT-B`: Validation approves concurrently edited question/solution/rubric.
    - `DEFECT-C`: Reaffirming unchanged attempt link erases valid score and reopens assessment.
    - `DEFECT-D`: Migration fails on legacy schema-v4 workspace containing duplicate attempt links.
-2. **Existing Regression Cases (Must Keep Passing)**:
+   - `DEFECT-01` to `DEFECT-09`: Nine confirmed reliability and security defects.
+3. **Existing Regression Cases (Must Keep Passing)**:
    - `REG-01`: Multi-connection scoring vs retraction serialization (M6 Defect 1 / F31).
    - `REG-02`: Unlinked diagnostic item scoring rejection & attempt exclusivity index (M6 Defect 2 / F32).
    - `REG-03`: Strict check schema validation (rejecting 'false', 'failed', 'pending', numbers) (M6 Defect 3 / F33).
@@ -65,3 +73,10 @@
 | **DEFECT-08** | Confirmed Defect | CLI forwards `submission_event_id`; detects conflicting request-id/course-id; rejects non-object payloads with code 1. | • Forward `submission_event_id` in `commit_evidence`<br>• Non-object JSON input (`[1,2,3]`, `"str"`, `123`) exits with code 1<br>• Conflicting `--request-id` vs payload `request_id`<br>• Conflicting `--course-id` vs payload `course_id` | `pytest tests/test_nine_defect_repairs.py -k test_defect8` | Verified | Enforced in `src/course_tutor/cli.py`. |
 | **DEFECT-09** | Confirmed Defect | Restore rejects Zip Slip, symlinks, absolute paths, and external database source paths. | • Archive member with `../evil.txt`<br>• Archive member with `/etc/passwd`<br>• Manifest database with `../../external.db`<br>• Sandboxed path resolution via `_safe_resolve_staged_path` | `pytest tests/test_nine_defect_repairs.py -k test_defect9` | Verified | Pre-extraction zip verification and `_safe_resolve_staged_path` raise `RestoreIntegrityError`. |
 | **MIG-006** | Migration | Schema v6 upgrade adds `exercise_revision` and `exercise_content_hash` to `attempts` and `evidence`. | • Upgrade from v5 schema workspace<br>• Automatic column addition<br>• Schema version incremented to 6 | `pytest tests/test_nine_defect_repairs.py -k test_migration_006` | Verified | Verified in `run_migrations`. |
+| **INV-01** | Invariant / Defect 1 | Legacy NULL identity resolution on unedited questions, quarantine on modified questions via Migration 007, and strict commit rejection. | • Unedited question resolves to revision 1 & content hash<br>• Modified question leaves NULL revision/hash<br>• Scored items on unresolved/outdated attempts quarantined to `pending_review`<br>• Assessments safely reopened<br>• `commit_evidence` strictly rejects unresolved/mismatched identity | `pytest tests/test_underlying_invariants_repairs.py -k test_defect1` | Verified | Migration 007 populates backups `backup_v6_*`; resolves unedited questions; quarantines modified questions; `commit_evidence` enforces resolved identity. |
+| **INV-02** | Invariant / Defect 2 | Obsolete/unresolved evidence cannot revive to active for current performance; replacement stays `pending_review` with historical rationale. | • Correction on obsolete revision evidence<br>• Correction on unresolved legacy identity evidence<br>• Replacement marked `pending_review`<br>• Projections (`recompute_topic_state`, `course_brief`) exclude obsolete evidence | `pytest tests/test_underlying_invariants_repairs.py -k test_defect2` | Verified | `correct_evidence` checks `is_evidence_currently_applicable`; flags replacement `pending_review` when obsolete; topic state excludes obsolete evidence. |
+| **INV-03** | Invariant / Defect 3 | Observation evidence (`unassessed`, `pending`, `uncertain`, `unreadable`) cannot count as assessed coverage in progress reporting or topic states. | • Diagnostic item with observation evidence<br>• `assessment_progress` topic coverage reports `assessed: false`<br>• Topic state marks `unassessed_flag=True`<br>• Course brief reports topic as unassessed | `pytest tests/test_underlying_invariants_repairs.py -k test_defect3` | Verified | Enforced in `diagnostic.py` (`get_progress`) and `repositories.py` (`recompute_topic_state`). |
+| **INV-04** | Invariant / Defect 4 | Incomplete subpart evaluation cannot complete an entire question (`score_status="scored"`); all required subparts must receive evaluated evidence. Partial scores require `allow_partial=True`, receive `score_status="partially_scored"`, and leave assessment `open`. | • Scoring item with incomplete subparts raises `ValidationError`<br>• Scoring with `allow_partial=True` records `partially_scored`<br>• Assessment status remains `open`<br>• Full evaluation completes item as `scored` and completes assessment | `pytest tests/test_underlying_invariants_repairs.py -k test_defect4` | Verified | `are_all_required_subparts_evaluated` checked in `record_assessment_item_score`; partial scoring leaves assessment open. |
+| **INV-05** | Invariant / Defect 5 | Stale legacy repair on already-resolved quarantine records rejected with `ConflictError`; `expected_link_states` supported; overwriting active scored links rejected with `ConflictError`. | • Re-repairing resolved quarantine record raises `ConflictError`<br>• Overwriting active scored attempt without expectation raises `ConflictError`<br>• Matching `expected_link_states` succeeds with audit trail | `pytest tests/test_underlying_invariants_repairs.py -k test_defect5` | Verified | In `repair_legacy_duplicate_links`: rejects stale repairs and unexpected link states with `ConflictError`. |
+| **INV-06** | Invariant / Defect 6 | Finite numeric validation (numeric >= 0, reject booleans, NaN, Inf) in verification checks and metadata; CLI rejects non-standard JSON constants (`NaN`, `Infinity`) with exit code 1; CLI outputs valid JSON (`allow_nan=False`). | • NaN, Inf, -Inf, bool in check `score` rejected<br>• Negative check scores rejected<br>• Non-string `reason`/`notes` rejected<br>• Nested metadata non-finite numbers rejected<br>• CLI rejects `NaN`/`Infinity` constants with exit code 1 | `pytest tests/test_underlying_invariants_repairs.py -k test_defect6` | Verified | `validate_exercise_version` enforces finite numbers and string reasons; `cli.py` rejects JSON constants with code 1 and outputs with `allow_nan=False`. |
+| **MIG-007** | Migration | Schema v7 upgrade creates `backup_v6_*` tables, resolves unedited question identities, and quarantines legacy scored items on modified questions. | • Pre-migration backup tables `backup_v6_assessment_items`, `backup_v6_attempts`, `backup_v6_evidence`<br>• Safe identity resolution and quarantine<br>• Schema version incremented to 7 | `pytest tests/test_underlying_invariants_repairs.py -k test_defect1` | Verified | Verified in `run_migrations` and Migration 007 execution. |

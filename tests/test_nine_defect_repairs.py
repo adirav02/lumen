@@ -135,9 +135,10 @@ def test_defect1_observation_levels_rejected_for_confirmed_scores(temp_workspace
         with pytest.raises(ValidationError, match="Cannot award positive points"):
             core.record_assessment_item_score(diag_id, item_order=1, points_awarded=5.0, attempt_id=att_id)
 
-        # 6. Zero score can be awarded for evaluated incorrect work
-        zero_score = core.record_assessment_item_score(diag_id, item_order=1, points_awarded=0.0, attempt_id=att_id)
+        # 6. Zero score can be awarded for evaluated incorrect work (allow_partial=True when subparts remain)
+        zero_score = core.record_assessment_item_score(diag_id, item_order=1, points_awarded=0.0, attempt_id=att_id, allow_partial=True)
         assert zero_score["points_awarded"] == 0.0
+        assert zero_score["score_status"] == "partially_scored"
 
         # 7. Full credit requires all declared subparts evaluated
         # Only part_a is evaluated. Attempting to award full credit (10 points) must be rejected
@@ -755,7 +756,7 @@ def test_migration_006_upgrade_adds_revision_and_hash_columns(temp_workspace):
     run_migrations(con)
 
     ver_row = con.execute("SELECT MAX(version) as max_v FROM schema_migrations").fetchone()
-    assert ver_row["max_v"] == 6
+    assert ver_row["max_v"] >= 6
 
     # Verify columns exist
     att_cols_after = {r["name"] for r in con.execute("PRAGMA table_info(attempts)").fetchall()}

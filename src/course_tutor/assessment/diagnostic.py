@@ -24,7 +24,16 @@ from ..storage.repositories import (
     TopicRepository,
     compute_exercise_version_hash,
 )
+from ..learning.policy import (
+    are_all_required_subparts_evaluated,
+    get_required_subparts,
+    is_identity_resolved,
+    is_evidence_currently_applicable,
+    is_evidence_eligible_for_performance,
+    validate_finite_number,
+)
 from ..learning.service import LearningService
+
 
 
 class DiagnosticService:
@@ -320,10 +329,10 @@ class DiagnosticService:
         item_order: int,
         points_awarded: float,
         attempt_id: Optional[str] = None,
+        allow_partial: bool = False,
     ) -> Dict[str, Any]:
-        """Record rubric score for an assessment item requiring validated observed work and supporting evidence (Defect 1, 2)."""
-        if isinstance(points_awarded, bool) or not isinstance(points_awarded, (int, float)) or not math.isfinite(points_awarded):
-            raise ValidationError(f"Points awarded must be a finite numeric value, got {points_awarded!r}.")
+        """Record rubric score for an assessment item requiring validated observed work and supporting evidence (Defect 1, 2, 4)."""
+        points_num = validate_finite_number(points_awarded, "Points awarded", min_val=0.0)
 
         if isinstance(item_order, bool) or not isinstance(item_order, int) or item_order < 1:
             raise ValidationError(f"Invalid item order: {item_order!r}.")
@@ -337,9 +346,9 @@ class DiagnosticService:
             if not item:
                 raise ValidationError(f"Item {item_order} not found in assessment '{assessment_id}'.")
 
-            if points_awarded < 0 or points_awarded > item.max_points:
+            if points_num > item.max_points:
                 raise ValidationError(
-                    f"Points awarded {points_awarded} out of valid range [0, {item.max_points}]."
+                    f"Points awarded {points_num} out of valid range [0, {item.max_points}]."
                 )
 
             # If attempt_id is provided, it must match the persisted link
@@ -406,7 +415,7 @@ class DiagnosticService:
                     details={"reason": "Cannot record assessment score for an exercise version that is not validated."},
                 )
 
-            # Defect 2: Educational identity check against current exercise version
+            # Defect 2 & Defect 1: Educational identity check against current exercise version
             current_rev = len(ex_ver.revision_history) + 1
             current_hash = compute_exercise_version_hash(
                 ex_ver.question_text,
@@ -415,12 +424,16 @@ class DiagnosticService:
                 ex_ver.subparts,
             )
 
-            if attempt.exercise_revision is not None and attempt.exercise_revision != current_rev:
+            if not is_identity_resolved(attempt.exercise_revision, attempt.exercise_content_hash):
+                raise ValidationError(
+                    f"Attempt '{linked_attempt_id}' has unresolved educational identity. Cannot score assessment item."
+                )
+            if attempt.exercise_revision != current_rev:
                 raise ValidationError(
                     f"Attempt '{linked_attempt_id}' was performed on exercise revision {attempt.exercise_revision}, "
                     f"which does not match current revision {current_rev}."
                 )
-            if attempt.exercise_content_hash is not None and attempt.exercise_content_hash != current_hash:
+            if attempt.exercise_content_hash != current_hash:
                 raise ValidationError(
                     f"Attempt '{linked_attempt_id}' content hash does not match current exercise version content hash."
                 )
@@ -460,12 +473,16 @@ class DiagnosticService:
                 )
 
             for ev in evaluated_evidence:
-                if ev.exercise_revision is not None and ev.exercise_revision != current_rev:
+                if not is_identity_resolved(ev.exercise_revision, ev.exercise_content_hash):
+                    raise ValidationError(
+                        f"Evidence '{ev.id}' has unresolved educational identity. Cannot support confirmed score."
+                    )
+                if ev.exercise_revision != current_rev:
                     raise ValidationError(
                         f"Evidence '{ev.id}' is from outdated exercise revision {ev.exercise_revision}, "
                         f"expected current revision {current_rev}."
                     )
-                if ev.exercise_content_hash is not None and ev.exercise_content_hash != current_hash:
+                if ev.exercise_content_hash != current_hash:
                     raise ValidationError(
                         f"Evidence '{ev.id}' content hash does not match current exercise version content hash."
                     )
@@ -475,47 +492,47 @@ class DiagnosticService:
                 e.demonstrated_level in ("independent_mastery", "assisted_success", "partial_progress")
                 for e in evaluated_evidence
             )
-            if points_awarded > 0 and not has_positive_evidence:
+            if points_num > 0 and not has_positive_evidence:
                 raise ValidationError(
-                    f"Cannot award positive points ({points_awarded}) when all evaluated evidence is incorrect."
+                    f"Cannot award positive points ({points_num}) when all evaluated evidence is incorrect."
                 )
 
-            if points_awarded == 0 and all(e.demonstrated_level == "independent_mastery" for e in evaluated_evidence):
+            if points_num == 0 and all(e.demonstrated_level == "independent_mastery" for e in evaluated_evidence):
                 raise ValidationError(
                     "Cannot award zero points when all evaluated evidence demonstrates independent mastery."
                 )
 
-            # Full credit requires all declared subparts evaluated
-            if points_awarded == item.max_points and ex_ver.subparts:
-                if isinstance(ex_ver.subparts, dict):
-                    declared_subparts = set(ex_ver.subparts.keys())
-                elif isinstance(ex_ver.subparts, list):
-                    declared_subparts = set(str(k) for k in ex_ver.subparts)
-                else:
-                    declared_subparts = set()
-                if declared_subparts:
-                    evaluated_subparts = {e.subpart_key for e in evaluated_evidence if e.subpart_key}
-                    missing_subparts = declared_subparts - evaluated_subparts
-                    if missing_subparts:
-                        raise ValidationError(
-                            f"Cannot award full credit ({points_awarded}/{item.max_points}): declared subparts missing evaluated evidence: {sorted(missing_subparts)}."
-                        )
+            # Defect 4: Complete-item status requires all required rubric/subpart evaluation
+            required_subparts = get_required_subparts(ex_ver.subparts)
+            is_subparts_complete, missing_subparts = are_all_required_subparts_evaluated(required_subparts, evaluated_evidence)
+
+            if not is_subparts_complete:
+                if not allow_partial:
+                    raise ValidationError(
+                        f"Cannot score item: declared subparts missing evaluated evidence: {sorted(missing_subparts)}. "
+                        "Complete all required subpart evaluations before recording score, or pass allow_partial=True for partial scoring."
+                    )
+                score_status = "partially_scored"
+            else:
+                score_status = "scored"
 
             ev_ids = [e.id for e in evaluated_evidence]
 
             # Idempotent retry check
             if (
-                item.score_status == "scored"
-                and item.points_awarded == float(points_awarded)
+                item.score_status == score_status
+                and item.points_awarded == float(points_num)
                 and item.attempt_id == linked_attempt_id
                 and set(item.evidence_ids) == set(ev_ids)
             ):
                 return {
                     "assessment_id": assessment_id,
                     "item_order": item_order,
-                    "points_awarded": float(points_awarded),
+                    "points_awarded": float(points_num),
                     "max_points": item.max_points,
-                    "score_status": "scored",
+                    "score_status": score_status,
+                    "completed": score_status == "scored",
+                    "missing_subparts": sorted(missing_subparts) if not is_subparts_complete else [],
                     "score_history": item.score_history,
                     "attempt_id": linked_attempt_id,
                     "evidence_ids": item.evidence_ids,
@@ -523,27 +540,28 @@ class DiagnosticService:
 
             # Build audit history entry
             history_entry = {
-                "points_awarded": float(points_awarded),
+                "points_awarded": float(points_num),
                 "previous_points": item.points_awarded,
                 "attempt_id": linked_attempt_id,
                 "evidence_ids": ev_ids,
+                "score_status": score_status,
                 "recorded_at": utc_now_iso(),
-                "action": "score_recorded",
+                "action": "score_recorded" if score_status == "scored" else "partial_score_recorded",
             }
             score_history = list(item.score_history) + [history_entry]
 
             self.assessment_repo.update_item_progress(
                 item.id,
                 attempt_id=linked_attempt_id,
-                points_awarded=float(points_awarded),
-                score_status="scored",
+                points_awarded=float(points_num),
+                score_status=score_status,
                 score_history=score_history,
                 evidence_ids=ev_ids,
             )
 
-            # Update assessment status: only completed when ALL items are scored
+            # Update assessment status: only completed when ALL items are fully scored
             all_items = self.assessment_repo.get_items(assessment_id)
-            if all((it.points_awarded is not None and it.score_status == "scored") or (it.id == item.id and points_awarded is not None) for it in all_items):
+            if all((it.points_awarded is not None and it.score_status == "scored") for it in all_items):
                 self.assessment_repo.update_assessment_status(assessment_id, "completed")
             else:
                 self.assessment_repo.update_assessment_status(assessment_id, "open")
@@ -551,13 +569,16 @@ class DiagnosticService:
             return {
                 "assessment_id": assessment_id,
                 "item_order": item_order,
-                "points_awarded": float(points_awarded),
+                "points_awarded": float(points_num),
                 "max_points": item.max_points,
-                "score_status": "scored",
+                "score_status": score_status,
+                "completed": score_status == "scored",
+                "missing_subparts": sorted(missing_subparts) if not is_subparts_complete else [],
                 "score_history": score_history,
                 "attempt_id": linked_attempt_id,
                 "evidence_ids": ev_ids,
             }
+
 
     def _get_family_exposure(self, course_id: str, exercise_family: str) -> int:
         """Count how many attempts have occurred for this exercise family in the course."""
@@ -603,6 +624,23 @@ class DiagnosticService:
         assessment_attempt_ids = {it.attempt_id for it in items if it.attempt_id}
         all_active_evs = self.evidence_repo.list_evidence(course_id=assessment.course_id, status="active")
         assessment_evs = [e for e in all_active_evs if e.attempt_id in assessment_attempt_ids]
+
+        # Exercise version cache for identity validation (Defect 2 & Defect 3)
+        ex_ver_cache: Dict[str, Optional[Tuple[int, str]]] = {}
+        for it in items:
+            if it.exercise_version_id not in ex_ver_cache:
+                ex_row = self.exercise_repo.get_exercise_version(it.exercise_version_id)
+                if ex_row:
+                    c_rev = len(ex_row.revision_history) + 1
+                    c_hash = compute_exercise_version_hash(
+                        ex_row.question_text,
+                        ex_row.reference_solution,
+                        ex_row.rubric,
+                        ex_row.subparts,
+                    )
+                    ex_ver_cache[it.exercise_version_id] = (c_rev, c_hash)
+                else:
+                    ex_ver_cache[it.exercise_version_id] = None
 
         items_summary = []
         for it in items:
@@ -691,8 +729,11 @@ class DiagnosticService:
                 items_scored.append(item_detail)
                 total_awarded_points += float(it.points_awarded)
                 attempted_possible_points += it.max_points
-            elif it.score_status == "pending_review":
+            elif it.score_status in ("pending_review", "partially_scored"):
                 items_pending.append(item_detail)
+                if it.points_awarded is not None:
+                    total_awarded_points += float(it.points_awarded)
+                    attempted_possible_points += it.max_points
             else:
                 items_unassessed.append(item_detail)
 
@@ -710,16 +751,27 @@ class DiagnosticService:
             t = course_topics.get(tid)
             t_name = t.name if t else tid
 
-            # 1. Assessment-scoped topic coverage
-            t_assessment_evs = [e for e in assessment_evs if e.topic_id == tid]
-            if t_assessment_evs:
+            # 1. Assessment-scoped topic coverage (Defect 3: active, evaluated, currently applicable evidence only)
+            t_evaluated_evs = []
+            for e in assessment_evs:
+                if e.topic_id != tid:
+                    continue
+                if e.demonstrated_level not in EVALUATED_DEMONSTRATED_LEVELS:
+                    continue
+                if not is_identity_resolved(e.exercise_revision, e.exercise_content_hash):
+                    continue
+                ex_ident = ex_ver_cache.get(e.exercise_version_id)
+                if ex_ident and e.exercise_revision == ex_ident[0] and e.exercise_content_hash == ex_ident[1]:
+                    t_evaluated_evs.append(e)
+
+            if t_evaluated_evs:
                 topic_coverage[t_name] = {
                     "topic_id": tid,
                     "assessed": True,
-                    "independent_successes": sum(1 for e in t_assessment_evs if e.demonstrated_level == "independent_mastery"),
-                    "assisted_successes": sum(1 for e in t_assessment_evs if e.demonstrated_level == "assisted_success"),
-                    "partial_progress": sum(1 for e in t_assessment_evs if e.demonstrated_level == "partial_progress"),
-                    "errors": sum(1 for e in t_assessment_evs if e.demonstrated_level == "incorrect"),
+                    "independent_successes": sum(1 for e in t_evaluated_evs if e.demonstrated_level == "independent_mastery"),
+                    "assisted_successes": sum(1 for e in t_evaluated_evs if e.demonstrated_level == "assisted_success"),
+                    "partial_progress": sum(1 for e in t_evaluated_evs if e.demonstrated_level == "partial_progress"),
+                    "errors": sum(1 for e in t_evaluated_evs if e.demonstrated_level == "incorrect"),
                 }
             else:
                 topic_coverage[t_name] = {

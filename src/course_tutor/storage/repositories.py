@@ -38,6 +38,9 @@ from ..models import (
     TopicState,
     UnitProvenance,
     utc_now_iso,
+    is_identity_resolved,
+    validate_finite_number,
+    validate_finite_metadata,
 )
 from .db import atomic_transaction
 
@@ -969,6 +972,32 @@ class ExerciseRepository:
                     if state_val is not None and not isinstance(state_val, str):
                         raise ValidationError(f"Structured check 'state' for '{k}' must be a string, got {state_val!r}.")
 
+                    # Defect 6 / Defect 7: Validate finite numeric score and schema fields
+                    score_val = v.get("score")
+                    if score_val is not None:
+                        validate_finite_number(score_val, f"Structured check 'score' for '{k}'", min_val=0.0)
+
+                    reason_val = v.get("reason")
+                    if reason_val is not None and not isinstance(reason_val, str):
+                        raise ValidationError(
+                            f"Structured check 'reason' for '{k}' must be a string, got {type(reason_val).__name__} ({reason_val!r})."
+                        )
+
+                    notes_val = v.get("notes")
+                    if notes_val is not None and not isinstance(notes_val, str):
+                        raise ValidationError(
+                            f"Structured check 'notes' for '{k}' must be a string, got {type(notes_val).__name__} ({notes_val!r})."
+                        )
+
+                    meta_val = v.get("metadata")
+                    if meta_val is not None:
+                        if not isinstance(meta_val, dict):
+                            raise ValidationError(
+                                f"Structured check 'metadata' for '{k}' must be a dictionary, got {type(meta_val).__name__} ({meta_val!r})."
+                            )
+                        validate_finite_metadata(meta_val, f"Structured check 'metadata' for '{k}'")
+
+
                     s_lower = status_val.strip().lower() if status_val is not None else None
                     st_lower = state_val.strip().lower() if state_val is not None else None
 
@@ -1546,25 +1575,67 @@ class EvidenceRepository:
         if not active_evs and topic_id != actual_topic_id:
             active_evs = self.list_evidence(course_id, topic_id=topic_id, status="active")
 
-        ind_success = sum(1 for e in active_evs if e.demonstrated_level == "independent_mastery")
-        ass_success = sum(1 for e in active_evs if e.demonstrated_level == "assisted_success")
-        partial_prog = sum(1 for e in active_evs if e.demonstrated_level == "partial_progress")
-        errors = sum(1 for e in active_evs if e.demonstrated_level == "incorrect")
-        evaluated_evs = [e for e in active_evs if e.demonstrated_level in EVALUATED_DEMONSTRATED_LEVELS]
+        # Defect 2: Filter active evidence by educational identity eligibility!
+        # Only active evidence whose educational identity is resolved and matches the current
+        # exercise version's revision and content hash is eligible for current topic performance.
+        eligible_active_evs = []
+        ex_ver_cache: Dict[str, Optional[Tuple[int, str]]] = {}
+        for e in active_evs:
+            if not is_identity_resolved(e.exercise_revision, e.exercise_content_hash):
+                continue
+            if e.exercise_version_id not in ex_ver_cache:
+                ex_row = self.con.execute(
+                    "SELECT question_text, reference_solution, rubric_json, subparts_json, revision_history_json FROM exercise_versions WHERE id = ?",
+                    (e.exercise_version_id,),
+                ).fetchone()
+                if not ex_row:
+                    ex_ver_cache[e.exercise_version_id] = None
+                else:
+                    try:
+                        rev_h = json.loads(ex_row["revision_history_json"] or "[]")
+                    except Exception:
+                        rev_h = []
+                    c_rev = len(rev_h) + 1
+                    try:
+                        subp = json.loads(ex_row["subparts_json"] or "[]")
+                    except Exception:
+                        subp = []
+                    try:
+                        rubr = json.loads(ex_row["rubric_json"] or "{}")
+                    except Exception:
+                        rubr = {}
+                    c_h = compute_exercise_version_hash(
+                        ex_row["question_text"],
+                        ex_row["reference_solution"],
+                        rubr,
+                        subp,
+                    )
+                    ex_ver_cache[e.exercise_version_id] = (c_rev, c_h)
+
+            ex_info = ex_ver_cache[e.exercise_version_id]
+            if ex_info and e.exercise_revision == ex_info[0] and e.exercise_content_hash == ex_info[1]:
+                eligible_active_evs.append(e)
+
+        ind_success = sum(1 for e in eligible_active_evs if e.demonstrated_level == "independent_mastery")
+        ass_success = sum(1 for e in eligible_active_evs if e.demonstrated_level == "assisted_success")
+        partial_prog = sum(1 for e in eligible_active_evs if e.demonstrated_level == "partial_progress")
+        errors = sum(1 for e in eligible_active_evs if e.demonstrated_level == "incorrect")
+        evaluated_evs = [e for e in eligible_active_evs if e.demonstrated_level in EVALUATED_DEMONSTRATED_LEVELS]
         is_unassessed = len(evaluated_evs) == 0
-        last_event_id = active_evs[-1].event_id if active_evs else None
+        last_event_id = eligible_active_evs[-1].event_id if eligible_active_evs else None
         now = utc_now_iso()
 
         error_breakdown: Dict[str, int] = {}
-        for e in active_evs:
+        for e in eligible_active_evs:
             if e.error_category:
                 error_breakdown[e.error_category] = error_breakdown.get(e.error_category, 0) + 1
 
         summary = {
-            "total_active_evidence": len(active_evs),
+            "total_active_evidence": len(eligible_active_evs),
             "error_breakdown": error_breakdown,
-            "skills_assessed": list({e.skill_id for e in active_evs}),
+            "skills_assessed": list({e.skill_id for e in eligible_active_evs}),
         }
+
 
         row = self.con.execute(
             "SELECT id FROM topic_state WHERE course_id = ? AND topic_id = ?",

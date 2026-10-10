@@ -4,7 +4,10 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 from typing import Any, Dict, List, Optional
+
+from .errors import ValidationError
 
 
 def utc_now_iso() -> str:
@@ -18,6 +21,67 @@ def compute_canonical_hash(payload: Dict[str, Any], exclude_keys: Optional[List[
     clean_dict = {k: v for k, v in payload.items() if k not in exclude}
     serialized = json.dumps(clean_dict, sort_keys=True, ensure_ascii=False, default=str)
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def compute_exercise_version_hash(
+    question_text: str,
+    reference_solution: str = "",
+    rubric: Optional[Dict[str, Any]] = None,
+    subparts: Optional[Any] = None,
+) -> str:
+    """Compute a deterministic content hash for an exercise version's educational content."""
+    payload = {
+        "question_text": question_text,
+        "reference_solution": reference_solution,
+        "rubric": rubric or {},
+        "subparts": subparts or [],
+    }
+    encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def is_identity_resolved(revision: Optional[int], content_hash: Optional[str]) -> bool:
+    """Return True if educational identity (revision and content hash) is explicitly known and resolved."""
+    if revision is None or type(revision) is not int or type(revision) is bool or revision <= 0:
+        return False
+    if content_hash is None or not isinstance(content_hash, str) or not content_hash.strip():
+        return False
+    return True
+
+
+def validate_finite_number(
+    val: Any,
+    name: str,
+    min_val: Optional[float] = None,
+    max_val: Optional[float] = None,
+) -> float:
+    """Validate that val is a finite numeric value (not boolean, not NaN, not Infinity)."""
+    if type(val) is bool:
+        raise ValidationError(f"{name} must be a finite numeric value (not boolean), got {val!r}.")
+    if not isinstance(val, (int, float)):
+        raise ValidationError(f"{name} must be a finite numeric value, got {type(val).__name__} ({val!r}).")
+    if math.isnan(val) or math.isinf(val):
+        raise ValidationError(f"{name} must be a finite numeric value, got {val!r}.")
+    fval = float(val)
+    if min_val is not None and fval < min_val:
+        raise ValidationError(f"{name} must be >= {min_val}, got {fval}.")
+    if max_val is not None and fval > max_val:
+        raise ValidationError(f"{name} must be <= {max_val}, got {fval}.")
+    return fval
+
+
+def validate_finite_metadata(data: Any, path: str = "metadata") -> None:
+    """Recursively validate that all numeric values in metadata are finite."""
+    if isinstance(data, dict):
+        for k, v in data.items():
+            validate_finite_metadata(v, f"{path}.{k}")
+    elif isinstance(data, list):
+        for idx, item in enumerate(data):
+            validate_finite_metadata(item, f"{path}[{idx}]")
+    elif type(data) in (int, float) and type(data) is not bool:
+        if math.isnan(data) or math.isinf(data):
+            raise ValidationError(f"Non-finite numeric value in {path}: {data!r}.")
+
 
 
 @dataclass

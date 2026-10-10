@@ -2,7 +2,7 @@
 
 **Status Date**: 2026-10-10  
 **Environment**: Linux / Python 3.14.8 / SQLite 3.51.2 (FTS5 Enabled) / CI Matrix configured for Python 3.10–3.14  
-**Overall Completion**: All Milestones M0–M8 complete; 87 automated conformance, boundary, security, and concurrency regression tests passing; verification complete across all 9 confirmed defects, audit requirements, and Migration 006.
+**Overall Completion**: All Milestones M0–M9 complete; 93 automated conformance, boundary, security, concurrency, and underlying invariant regression tests passing; verification complete across all confirmed defects, audit requirements, and Migrations 006 & 007.
 
 ---
 
@@ -19,10 +19,10 @@
 | **M6 — Correctness & Reliability Repair Pass** | **Complete** | • Concurrency serialization between scoring and retraction in `atomic_transaction`<br>• Attempt exclusivity: Migration 005 partial unique index on non-null `attempt_id`<br>• Explicit `link_assessment_item_attempt` and audit history on relinking<br>• Strict verification check schema (rejecting 'false', 'failed', 'pending', numbers)<br>• Finite points validation and strict boolean parsing<br>• Timeline-aware assistance classification (`assistance_after_submission` & mixed subparts)<br>• Atomic assessment item attempt startup preserving unowned assessments on error<br>• Exception-safe initialization in `LumenCore` with zero FD leaks and clean restore<br>• Safe `_check_db_not_locked` handling corrupt databases for forced restore<br>• GitHub Actions CI workflow matrix (`.github/workflows/ci.yml`) covering Python 3.10–3.14 | `tests/test_boundary_repairs_concurrency.py` (8 tests passing):<br>• Multi-connection scoring/retraction concurrency (Orderings A & B)<br>• Unlinked attempt rejection & attempt exclusivity<br>• Relink audit trail in score history<br>• Strict checks validation schema<br>• Finite score validation<br>• Timeline assistance and mixed subparts<br>• Atomic startup and unowned assessment preservation<br>• Exception-safe lock release, zero FD leaks, and restore recovery |
 | **M7 — Final Verification & Defect Pass** | **Complete** | • Confirmed score requiring active evaluated evidence for any score, including zero (Defect A)<br>• Exercise validation identifies and checks exact revision and content hash identity (Defect B)<br>• Idempotent attempt link reaffirmation preserving points, evidence, and status (Defect C)<br>• Schema v4 pre-migration backup table (`backup_v4_assessment_items`), audit table (`legacy_duplicate_attempt_links`), quarantine to `pending_review`, and repair path (Defect D)<br>• Lifecycle boundary invariants: item order type checking, non-empty learner IDs, cross-course and duplicate assessment creation prevention | `tests/test_final_verification.py` (10 tests passing):<br>• Zero score with/without evidence<br>• Rollback state preservation<br>• Exact revision question/rubric validation<br>• Idempotent link reaffirmation<br>• Legacy schema v4 migration & quarantine<br>• Lifecycle boundaries (item_order, learner_id)<br>• Cross-course and duplicate assessments<br>• Assistance chronology and exposure preservation<br>• CLI update and repair commands |
 | **M8 — Complete Reliability & Security Repair Pass** | **Complete** | • Strict evidence-level schema; observation levels excluded from confirmed scores (Defect 1)<br>• Persistent educational revision & content hash identity via Migration 006; rejection of outdated submission evaluation and item scoring (Defect 2)<br>• Mandatory caller-side validation identity (`expected_revision` or `expected_content_hash`) (Defect 3)<br>• Validation provenance recording final attested revision and hash (Defect 4)<br>• Strict verification check schema validation and conflict rejection (Defect 5)<br>• Caller-supplied learner ID ownership verification in attempt linking (Defect 6)<br>• Idempotent link reaffirmation and safe legacy repair (Defect 7)<br>• CLI argument forwarding and non-object JSON validation (exit code 1) (Defect 8)<br>• Sandboxed restore path resolution rejecting Zip Slip, symlinks, absolute paths, and traversal (Defect 9) | `tests/test_nine_defect_repairs.py` (10 tests passing):<br>• Defect 1: Observation levels rejected for scores; subpart completeness<br>• Defect 2: Outdated submission and evidence revision rejection<br>• Defect 3: Mandatory caller-side validation identity<br>• Defect 4: Final attested candidate revision and content hash in provenance<br>• Defect 5: Contradictory structured checks rejected<br>• Defect 6: Caller learner ID ownership verification<br>• Defect 7: Idempotent legacy repair reaffirmation<br>• Defect 8: CLI argument forwarding and exit code 1 validation<br>• Defect 9: Sandboxed restore rejecting Zip Slip and traversal<br>• Migration 006: Schema upgrade to v6 with revision & hash columns |
-
+| **M9 — Underlying Invariants Repair Pass** | **Complete** | • Migration 007 legacy identity resolution on unedited questions, quarantine on modified questions (`backup_v6_*`, `resolve_and_quarantine_legacy_identities`) & strict commit rejection (Defect 1)<br>• Obsolete/unresolved evidence cannot revive to active for current performance; `correct_evidence` creates replacement with `pending_review` status; projections (`recompute_topic_state`, `course_brief`, progress reports) exclude obsolete evidence (Defect 2)<br>• Observation evidence (`unassessed`, `pending`, `uncertain`, `unreadable`) excluded from assessed coverage; only active, eligible, evaluated evidence sets topic coverage `assessed: true` (Defect 3)<br>• Incomplete subpart evaluation cannot complete an entire question (`score_status="scored"`); required subpart completeness strictly enforced; partial scores without complete subparts require `allow_partial=True`, receive `score_status="partially_scored"`, and leave assessment `status="open"` (Defect 4)<br>• Stale legacy repair on already-resolved quarantine records rejected with `ConflictError`; `expected_link_states` supported; overwriting active scored links without explicit expectation rejected with `ConflictError` (Defect 5)<br>• Finite numeric validation (numeric >= 0, reject booleans, NaN, Inf) in verification checks and metadata; CLI rejects non-standard JSON constants (`NaN`, `Infinity`) with exit code 1; CLI outputs strictly valid JSON (`allow_nan=False`) (Defect 6) | `tests/test_underlying_invariants_repairs.py` (6 tests passing):<br>• Defect 1: Legacy identity resolution, backup, and quarantine<br>• Defect 2: Corrections on obsolete evidence stay pending<br>• Defect 3: Observation evidence excluded from assessed coverage<br>• Defect 4: Subpart completeness and partial scoring lifecycle<br>• Defect 5: Stale legacy repair and expected link states<br>• Defect 6: Finite numeric checks and CLI payload enforcement |
 ---
 
-## 2. Failure Scenarios Coverage (F01–F30)
+## 2. Failure Scenarios Coverage (F01–F55)
 
 | ID | Failure Fixture Scenario | Implemented Behavior & Verification | Test Case |
 |---|---|---|---|
@@ -66,6 +66,21 @@
 | **F38** | Validation approves concurrently edited question | Validation attestation identifies exact question/solution/rubric revision and content identity; rejects stale attestations. | `test_defect_b_validation_rejects_concurrently_edited_question`<br>`test_defect_b_solution_and_rubric_changes_require_exact_revision` |
 | **F39** | Reaffirming unchanged attempt link erases score | Reaffirming unchanged link is an idempotent no-op preserving points, evidence, history, and completion status. | `test_defect_c_reaffirming_link_preserves_score_and_completion` |
 | **F40** | Migration on schema-v4 workspace with duplicate attempt links | Pre-migration detection backs up to `backup_v4_assessment_items`, audits duplicates into `legacy_duplicate_attempt_links`, quarantines to `pending_review`, and allows clean Migration 005. | `test_defect_d_legacy_migration_with_duplicate_attempt_links` |
+| **F41** | Observation evidence level submitted for confirmed assessment score | Reject confirmed score; enforce strict evidence schema; require evaluated evidence; never report unassessed work as assisted. | `test_defect1_observation_levels_rejected_for_confirmed_scores` |
+| **F42** | Submission evaluated after exercise replacement or content change | Persist revision/hash on attempts & evidence (Migration 006); reject evaluating old submission or scoring using outdated evidence. | `test_defect2_submission_reuse_rejected_after_exercise_replacement` |
+| **F43** | Question validation called without caller-side identity | Reject validation without caller identity; mandate positive integer `expected_revision` or non-empty `expected_content_hash`. | `test_defect3_exact_revision_mandatory_in_validation` |
+| **F44** | Question validation provenance records stale pre-update values | Provenance records final attested revision and content hash in provenance, atomically committed with snapshot history. | `test_defect4_validation_provenance_records_final_attested_content_and_history` |
+| **F45** | Contradictory structured verification checks submitted | Strict schema: reject conflicting status/state, disallowed keys, duplicate check names, and failing/pending statuses. | `test_defect5_contradictory_and_invalid_structured_checks_rejected` |
+| **F46** | Caller-supplied learner ID in linking mismatches attempt owner | Verify caller learner ID matches attempt owner; reject attempt ownership overrides. | `test_defect6_caller_supplied_learner_id_verified_against_attempt_owner` |
+| **F47** | Repeated legacy repair reaffirms unchanged attempt link | Reaffirmation is an idempotent no-op preserving points, evidence, history, and completed assessment state. | `test_defect7_repeated_legacy_repair_idempotent_and_safe_relink` |
+| **F48** | CLI operation omits API parameters or receives malformed payload | Forward `submission_event_id`; reject non-object JSON with code 1; detect conflicting CLI options vs payload parameters. | `test_defect8_cli_forwards_submission_event_id_and_validates_payload` |
+| **F49** | Restore archive contains Zip Slip, symlink, absolute path, or traversal | Sandboxed path resolution strictly rejects traversal, symlinks, absolute paths in archive and manifest. | `test_defect9_restore_path_traversal_and_zip_slip_rejection` |
+| **F50** | Legacy workspace contains NULL identity attempts/evidence | Migration 007 resolves unedited questions, creates `backup_v6_*`, quarantines modified question items to `pending_review`, and reopens assessments. | `test_defect1_legacy_identity_resolution_and_quarantine` |
+| **F51** | Correction attempted on obsolete or unresolved evidence | Replacement is stamped `pending_review` with historical rationale; topic state recomputation and brief exclude obsolete evidence. | `test_defect2_correction_on_obsolete_evidence_stays_pending` |
+| **F52** | Observation evidence submitted for topic coverage | Observation evidence excluded from assessed coverage; topic state and course brief retain `assessed: false` / unassessed status. | `test_defect3_observation_evidence_excluded_from_assessed_coverage` |
+| **F53** | Incomplete subpart evaluation submitted for full scoring | Reject scoring without complete subparts; with `allow_partial=True`, assign `partially_scored` and leave assessment status `open`. | `test_defect4_subpart_completeness_and_partial_scoring` |
+| **F54** | Stale legacy repair or uncoordinated link overwrites | Reject already-resolved quarantine repairs with `ConflictError`; reject overwriting active scored links without explicit `expected_link_states`. | `test_defect5_stale_legacy_repair_and_expected_link_states` |
+| **F55** | Non-finite numbers or JSON constants in checks or CLI | Reject NaN, Inf, booleans in check score; reject non-finite nested metadata; CLI rejects `NaN`/`Infinity` constants with exit code 1. | `test_defect6_finite_numeric_checks_and_cli_payload` |
 
 ---
 
@@ -192,4 +207,52 @@ Simulates: (1) Session Brief -> (2) Concept Search -> (3) Dependency Expansion &
 - **Implementation Location**: `src/course_tutor/storage/repositories.py` (`update_course`, `update_attempt`).
 - **Regression Test**: `tests/test_boundary_repairs_concurrency.py::test_audit_idempotency_and_revision_integrity`
 - **Verification Result**: Passed (`StaleRevisionError` raised on mismatched revision).
+- **Status**: **Verified**
+
+### Underlying Invariant 1: Legacy NULL Identity Resolution & Quarantine (Migration 007)
+- **Priority**: High (P1)
+- **Reproduction**: Legacy schema-v6 workspace having attempts or evidence with NULL revision/hash; attempts on modified questions scored without identity resolution.
+- **Implementation Location**: `src/course_tutor/storage/migrations.py` (`resolve_and_quarantine_legacy_identities`), `src/course_tutor/learning/service.py` (`commit_evidence`).
+- **Regression Test**: `tests/test_underlying_invariants_repairs.py::test_defect1_legacy_identity_resolution_and_quarantine`
+- **Verification Result**: Passed (pre-migration backups `backup_v6_*` populated, unedited questions resolved, modified questions quarantined with audit history, assessment reopened, `commit_evidence` rejects unresolved/mismatched identity).
+- **Status**: **Verified**
+
+### Underlying Invariant 2: Corrections on Obsolete Evidence Retain Pending Review
+- **Priority**: High (P1)
+- **Reproduction**: Correcting evidence on an obsolete exercise revision or unresolved identity promoted the replacement evidence to active status, inflating topic performance.
+- **Implementation Location**: `src/course_tutor/learning/service.py` (`correct_evidence`), `src/course_tutor/learning/policy.py` (`is_evidence_currently_applicable`), `src/course_tutor/storage/repositories.py` (`recompute_topic_state`).
+- **Regression Test**: `tests/test_underlying_invariants_repairs.py::test_defect2_correction_on_obsolete_evidence_stays_pending`
+- **Verification Result**: Passed (replacement created with `status="pending_review"` and historical rationale; recomputed topic state and course brief exclude obsolete evidence).
+- **Status**: **Verified**
+
+### Underlying Invariant 3: Observation Evidence Excluded from Assessed Coverage
+- **Priority**: High (P1)
+- **Reproduction**: Committing observation-level evidence (`unassessed`, `pending`, `uncertain`, `unreadable`) set topic coverage `assessed: true` in diagnostics and topic state.
+- **Implementation Location**: `src/course_tutor/assessment/diagnostic.py` (`get_progress`), `src/course_tutor/storage/repositories.py` (`recompute_topic_state`).
+- **Regression Test**: `tests/test_underlying_invariants_repairs.py::test_defect3_observation_evidence_excluded_from_assessed_coverage`
+- **Verification Result**: Passed (only active, eligible, evaluated evidence sets `assessed: true`; observation evidence preserves `assessed: false` and `unassessed_flag: true`).
+- **Status**: **Verified**
+
+### Underlying Invariant 4: Subpart Completeness & Partial Scoring Lifecycle
+- **Priority**: High (P1)
+- **Reproduction**: Evaluating only one subpart of a multi-part exercise allowed marking the assessment item as `score_status="scored"` and completing the assessment.
+- **Implementation Location**: `src/course_tutor/assessment/diagnostic.py` (`record_assessment_item_score`), `src/course_tutor/learning/policy.py` (`are_all_required_subparts_evaluated`, `get_required_subparts`).
+- **Regression Test**: `tests/test_underlying_invariants_repairs.py::test_defect4_subpart_completeness_and_partial_scoring`
+- **Verification Result**: Passed (scoring without required subparts raises `ValidationError`; `allow_partial=True` marks `partially_scored` and keeps assessment `open`; all subparts evaluated marks `scored` and completes assessment).
+- **Status**: **Verified**
+
+### Underlying Invariant 5: Stale Legacy Repair & Expected Link States
+- **Priority**: Medium (P2)
+- **Reproduction**: Re-running legacy repair on already-resolved quarantine records or silently overwriting active scored links.
+- **Implementation Location**: `src/course_tutor/storage/migrations.py` (`repair_legacy_duplicate_links`), `src/course_tutor/errors.py` (`ConflictError`).
+- **Regression Test**: `tests/test_underlying_invariants_repairs.py::test_defect5_stale_legacy_repair_and_expected_link_states`
+- **Verification Result**: Passed (stale repairs on resolved records raise `ConflictError`; overwriting active scored links without explicit expectation raises `ConflictError`; matching expectation succeeds).
+- **Status**: **Verified**
+
+### Underlying Invariant 6: Finite Numeric Validation (Checks & CLI)
+- **Priority**: High (P1)
+- **Reproduction**: `validate_exercise_version` accepted NaN, Inf, booleans, negative numbers in check `score`, and non-strings in `reason`/`notes`; CLI accepted non-standard JSON constants (`NaN`, `Infinity`).
+- **Implementation Location**: `src/course_tutor/storage/repositories.py` (`validate_exercise_version`), `src/course_tutor/models.py` (`validate_finite_number`, `validate_finite_metadata`), `src/course_tutor/cli.py` (`_reject_json_constants`, `parse_json_payload`, `output_json`).
+- **Regression Test**: `tests/test_underlying_invariants_repairs.py::test_defect6_finite_numeric_checks_and_cli_payload`
+- **Verification Result**: Passed (finite numbers >= 0 enforced; booleans and NaN/Inf rejected; nested metadata validated; CLI exits 1 on `NaN`/`Infinity`; output JSON formatted with `allow_nan=False`).
 - **Status**: **Verified**

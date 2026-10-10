@@ -2,7 +2,7 @@
 
 **Date**: 2026-10-10  
 **Repository**: `lumen`  
-**Git Base**: Fifth-round correctness and reliability pass following commit `5beff2133789a0d7c21eebacc6a26e0290f8115c`  
+**Git Base**: Sixth-round correctness and reliability pass (underlying invariants) following baseline commit `565d9dca1cac7899a003b3ffce96657536a25d90`  
 **Author / Implementer**: Antigravity Assistant  
 **Target Recipient**: OpenAI Codex (and continuing engineering agents)
 
@@ -10,7 +10,36 @@
 
 ## 1. Executive Summary & Verified Defect Resolutions
 
-In response to Codex's independent review of baseline commit `5beff2133789a0d7c21eebacc6a26e0290f8115c`, all 9 confirmed defects and related invariants have been repaired, audited, and verified across 87 automated tests (including 10 dedicated regression tests in `tests/test_nine_defect_repairs.py`), the CLI capability inspector, and the synthetic probability demo. All 87 automated tests pass on Python 3.12.
+In response to Codex's independent review of baseline commit `565d9dca1cac7899a003b3ffce96657536a25d90`, all 6 confirmed underlying invariant defects have been repaired, audited, and verified across 93 automated tests (including 6 dedicated regression tests in `tests/test_underlying_invariants_repairs.py`), the CLI capability inspector, and the synthetic probability demo. All 93 automated tests pass on Python 3.10–3.14.
+
+### Sixth-Round Verified Invariant Repairs Implemented
+
+1. **Defect 1: Legacy NULL Identity Resolution & Quarantine via Migration 007**:
+   - `migrations.py`: Added Migration 007 (`resolve_and_quarantine_legacy_identities`). Pre-migration tables `backup_v6_assessment_items`, `backup_v6_attempts`, and `backup_v6_evidence` capture existing state byte-for-byte before mutations.
+   - For unedited questions (`len(revision_history) == 0`), attempts and evidence are authoritatively resolved to `exercise_revision = 1` and canonical `exercise_content_hash = compute_exercise_version_hash(...)`.
+   - Modified questions remain NULL (unresolved identity). Legacy scored items on unresolved/outdated attempts or evidence are quarantined to `score_status="pending_review"` with audit history, and affected assessments are safely reopened to `status="open"`.
+   - `service.py`: `commit_evidence` strictly verifies that submission event educational identity is resolved and matches current exercise revision and hash, raising `ValidationError` otherwise.
+
+2. **Defect 2: Corrections on Obsolete/Unresolved Evidence Retain Pending Review**:
+   - `learning/service.py`: `correct_evidence` checks `is_evidence_currently_applicable(ev, current_rev, current_hash)`. If old evidence belongs to an obsolete revision or unresolved identity, the replacement evidence is created with `status="pending_review"` and historical rationale `"Historical correction on obsolete/pending revision (rev ...)"`.
+   - Projections (`repositories.py` `recompute_topic_state`, `assessment/diagnostic.py` `course_brief`, progress reports) exclude obsolete or unresolved evidence from active topic performance and unassessed counts.
+
+3. **Defect 3: Observation Evidence Excluded from Assessed Coverage**:
+   - `models.py` & `learning/policy.py`: Partitioned demonstrated levels into evaluated (`independent_mastery`, `assisted_success`, `partial_progress`, `incorrect`) and observation (`unassessed`, `pending`, `uncertain`, `unreadable`).
+   - `assessment/diagnostic.py` (`get_progress`) and `repositories.py` (`recompute_topic_state`): Observation evidence does not satisfy assessed coverage. Only active, eligible, evaluated evidence sets `assessed: true` in topic coverage and clears `unassessed_flag`.
+
+4. **Defect 4: Subpart Evaluation Completeness & Partial Scoring Lifecycle**:
+   - `learning/policy.py`: Added `get_required_subparts` and `are_all_required_subparts_evaluated` supporting lists of strings, lists of dicts (with `subpart_key`, `key`, `id`, respecting `required=False`), and dicts.
+   - `assessment/diagnostic.py`: `record_assessment_item_score` checks subpart completeness. If required subparts lack evaluated evidence and `allow_partial=False` (default), raises `ValidationError("Cannot score item: declared subparts missing evaluated evidence: ...")`. If `allow_partial=True`, assigns `score_status="partially_scored"`, includes observed points, and leaves assessment `status="open"`. Assessment only transitions to `status="completed"` when all items are fully `scored`.
+
+5. **Defect 5: Stale Legacy Repair Rejection (`ConflictError`) & `expected_link_states`**:
+   - `migrations.py`: `repair_legacy_duplicate_links` checks if target quarantine records are already resolved (`resolution_status != 'quarantined'`); if so, raises `ConflictError("Stale legacy repair: quarantine record ... is already resolved")`.
+   - Accepts `expected_link_states`. Overwriting an active scored attempt link without matching expectation raises `ConflictError`. Matching expectation succeeds with audit history in `score_history` and reopens assessment.
+
+6. **Defect 6: Finite Numeric Validation in Checks and CLI Input/Output**:
+   - `models.py`: Added `validate_finite_number` and `validate_finite_metadata`. Rejects booleans, NaN, Inf, and negative values for scores (`"must be a finite numeric value"`). Recursively validates nested numeric fields in metadata.
+   - `repositories.py`: `validate_exercise_version` validates check `score` (finite float >= 0, not bool), `reason` (str), `notes` (str), and nested `metadata`.
+   - `cli.py`: Configured `parse_json_payload` with `_reject_json_constants` (`parse_constant=_reject_json_constants`) to reject `NaN`, `Infinity`, `-Infinity` with exit code 1. Formats CLI JSON outputs using `json.dumps(..., allow_nan=False)`.
 
 ### Fifth-Round Verified Defect Repairs Implemented
 
@@ -105,9 +134,9 @@ python3 -m venv .venv
 .venv/bin/lumen capabilities
 # Output: {"status": "success", "data": {"contract_version": "1.0.0", "runtime": {"fts5_supported": true}, ...}}
 
-# 3. Full automated test suite (87/87 passed)
+# 3. Full automated test suite (93/93 passed)
 .venv/bin/pytest -v
-# Output: 87 passed in 2.90s
+# Output: 93 passed in 3.18s
 
 # 4. Standalone synthetic probability course demonstration
 .venv/bin/python demo.py
@@ -122,7 +151,14 @@ python3 -m venv .venv
 
 ## 3. Test Suite Breakdown
 
-All 87 automated test cases pass cleanly:
+All 93 automated test cases pass cleanly:
+- `tests/test_underlying_invariants_repairs.py` (6 tests):
+  - Defect 1: Migration 007 legacy identity resolution on unedited questions, quarantine on modified questions (`backup_v6_*`, `resolve_and_quarantine_legacy_identities`), and strict `commit_evidence` rejection of unresolved or mismatched identity.
+  - Defect 2: Corrections on obsolete evidence stay `pending_review` with historical rationale; recomputed topic states, course brief, and progress reporting exclude obsolete/unresolved evidence.
+  - Defect 3: Observation evidence excluded from assessed coverage in topic state and diagnostic progress reporting (`assessed: false`, `unassessed_flag: true`).
+  - Defect 4: Subpart completeness required for `score_status="scored"`; partial scoring requires `allow_partial=True`, receives `score_status="partially_scored"`, includes observed points, and leaves assessment `status="open"`.
+  - Defect 5: Stale legacy repair on already-resolved quarantine records rejected with `ConflictError`; `expected_link_states` enforced; overwriting active scored links without explicit expectation rejected with `ConflictError`.
+  - Defect 6: Finite numeric validation (numeric >= 0, reject booleans, NaN, Inf) in verification checks and metadata; CLI rejects non-standard JSON constants (`NaN`, `Infinity`) with exit code 1; CLI outputs valid JSON (`allow_nan=False`).
 - `tests/test_nine_defect_repairs.py` (10 tests):
   - Defect 1: Enforce evidence-level schema; observation levels (`unassessed`, `pending`, `uncertain`, `unreadable`) cannot support confirmed scores; positive score requires positive evaluated evidence; zero score requires evaluated incorrect work; full credit requires all declared subparts evaluated; progress reporting never classifies unassessed work as assisted.
   - Defect 2: Old submissions reused after exercise replacement. Persist educational revision and content hash identity on attempts and evidence (Migration 006); reject evaluating old submissions against changed exercise content; reject scoring assessment items using evidence from outdated exercise revisions; do not resume outdated attempts.

@@ -27,7 +27,13 @@ from ..storage.repositories import (
     TopicRepository,
     compute_exercise_version_hash,
 )
-from .policy import determine_demonstrated_level
+from .policy import (
+    determine_demonstrated_level,
+    is_identity_resolved,
+    is_evidence_currently_applicable,
+    is_evidence_eligible_for_performance,
+)
+
 
 
 class LearningService:
@@ -107,8 +113,10 @@ class LearningService:
 
             event_meta = dict(metadata or {})
             if event_type == "work_submission":
-                event_meta.setdefault("exercise_revision", attempt.exercise_revision)
-                event_meta.setdefault("exercise_content_hash", attempt.exercise_content_hash)
+                # Authoritative educational identity derived from attempt; caller metadata cannot override
+                event_meta["exercise_revision"] = attempt.exercise_revision
+                event_meta["exercise_content_hash"] = attempt.exercise_content_hash
+
 
             event = AttemptEvent(
                 id=str(uuid.uuid4()),
@@ -249,19 +257,25 @@ class LearningService:
                         submission_event = matching_submissions[-1]
                         subpart_key = submission_event.subpart_key or "default"
 
-                # Defect 2: Reject evaluating old submissions against changed exercise content
+                # Defect 1 & 2: Reject evaluating submissions with unresolved or outdated identity
                 sub_meta = submission_event.metadata or {}
-                sub_rev = sub_meta.get("exercise_revision") or attempt.exercise_revision
-                sub_hash = sub_meta.get("exercise_content_hash") or attempt.exercise_content_hash
+                sub_rev = sub_meta.get("exercise_revision") if sub_meta.get("exercise_revision") is not None else attempt.exercise_revision
+                sub_hash = sub_meta.get("exercise_content_hash") if sub_meta.get("exercise_content_hash") is not None else attempt.exercise_content_hash
 
-                if sub_rev is not None and sub_rev != current_rev:
+                if not is_identity_resolved(sub_rev, sub_hash):
+                    raise ValidationError(
+                        f"Cannot evaluate submission with unresolved educational identity (revision={sub_rev}, content_hash={sub_hash}) against current exercise version."
+                    )
+
+                if sub_rev != current_rev:
                     raise ValidationError(
                         f"Cannot evaluate submission against outdated exercise revision: submission was for revision {sub_rev}, current revision is {current_rev}."
                     )
-                if sub_hash is not None and sub_hash != current_hash:
+                if sub_hash != current_hash:
                     raise ValidationError(
                         "Cannot evaluate submission against outdated exercise content: submission content hash does not match current exercise version."
                     )
+
 
                 caller_rev = ev_data.get("exercise_revision") or ev_data.get("expected_revision")
                 if caller_rev is not None and caller_rev != current_rev:
@@ -330,8 +344,8 @@ class LearningService:
                     error_category=error_category,
                     rationale=rationale,
                     status="active",
-                    exercise_revision=sub_rev or current_rev,
-                    exercise_content_hash=sub_hash or current_hash,
+                    exercise_revision=sub_rev,
+                    exercise_content_hash=sub_hash,
                 )
                 self.evidence_repo.create_evidence(ev_rec)
                 created_evidence.append(ev_rec)
@@ -422,6 +436,47 @@ class LearningService:
                     if has_hint:
                         raise ValidationError("Cannot assign 'independent_mastery' via correction when hint was given before submission.")
 
+                ex_ver = self.exercise_repo.get_exercise_version(old_ev.exercise_version_id)
+                current_rev = len(ex_ver.revision_history) + 1 if ex_ver else None
+                current_hash = (
+                    compute_exercise_version_hash(
+                        ex_ver.question_text,
+                        ex_ver.reference_solution,
+                        ex_ver.rubric,
+                        ex_ver.subparts,
+                    )
+                    if ex_ver
+                    else None
+                )
+                is_currently_applicable = (
+                    ex_ver is not None
+                    and is_identity_resolved(old_ev.exercise_revision, old_ev.exercise_content_hash)
+                    and old_ev.exercise_revision == current_rev
+                    and old_ev.exercise_content_hash == current_hash
+                    and old_ev.status == "active"
+                )
+
+                if is_currently_applicable:
+                    target_status = "active"
+                    target_rationale = replacement.get("rationale", f"Correction: {correction_reason}")
+                else:
+                    # Defect 2: A correction cannot make obsolete or unresolved evidence eligible for current performance!
+                    target_status = "pending_review"
+                    target_rationale = replacement.get(
+                        "rationale",
+                        f"Historical correction on obsolete/pending revision {old_ev.exercise_revision}: {correction_reason}",
+                    )
+
+                if replacement.get("topic_id"):
+                    rep_t = self.topic_repo.get_topic(replacement["topic_id"])
+                    if not rep_t or rep_t.course_id != old_ev.course_id:
+                        raise CrossCourseViolationError(
+                            "Topic",
+                            replacement["topic_id"],
+                            old_ev.course_id,
+                            rep_t.course_id if rep_t else "unknown",
+                        )
+
                 new_rec = EvidenceRecord(
                     id=str(uuid.uuid4()),
                     course_id=old_ev.course_id,
@@ -433,12 +488,13 @@ class LearningService:
                     subpart_key=rep_subpart,
                     demonstrated_level=replacement["demonstrated_level"],
                     error_category=replacement.get("error_category"),
-                    rationale=replacement.get("rationale", f"Correction: {correction_reason}"),
-                    status="active",
+                    rationale=target_rationale,
+                    status=target_status,
                     exercise_revision=old_ev.exercise_revision,
                     exercise_content_hash=old_ev.exercise_content_hash,
                 )
                 resulting_ev = self.evidence_repo.supersede_evidence(evidence_id, new_rec, correction_reason)
+
             else:
                 resulting_ev = self.evidence_repo.retract_evidence(evidence_id, correction_reason)
 

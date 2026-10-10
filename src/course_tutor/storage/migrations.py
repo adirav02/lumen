@@ -4,7 +4,8 @@ from datetime import datetime, timezone
 import json
 import sqlite3
 from typing import Any, Dict, List, Optional, Tuple
-from ..errors import LegacyDuplicateAttemptLinkError, ValidationError
+from ..errors import ConflictError, LegacyDuplicateAttemptLinkError, ValidationError
+from ..models import compute_exercise_version_hash
 from .db import atomic_transaction
 
 MIGRATION_V1_SQL = """
@@ -312,6 +313,12 @@ ALTER TABLE evidence ADD COLUMN exercise_revision INTEGER;
 ALTER TABLE evidence ADD COLUMN exercise_content_hash TEXT;
 """
 
+MIGRATION_V7_SQL = """
+CREATE TABLE IF NOT EXISTS backup_v6_assessment_items AS SELECT * FROM assessment_items WHERE 1=0;
+CREATE TABLE IF NOT EXISTS backup_v6_attempts AS SELECT * FROM attempts WHERE 1=0;
+CREATE TABLE IF NOT EXISTS backup_v6_evidence AS SELECT * FROM evidence WHERE 1=0;
+"""
+
 MIGRATIONS: List[Tuple[int, str, str]] = [
     (1, "Initial schema for Lumen core with FTS5", MIGRATION_V1_SQL),
     (2, "Persist complete extracted sections and source locators", MIGRATION_V2_SQL),
@@ -319,7 +326,9 @@ MIGRATIONS: List[Tuple[int, str, str]] = [
     (4, "Track learner ownership on assessments and revision history on exercise versions", MIGRATION_V4_SQL),
     (5, "Enforce unique non-null attempt-to-item link in assessment_items", MIGRATION_V5_SQL),
     (6, "Educational content identity tracking on attempts and evidence", MIGRATION_V6_SQL),
+    (7, "Resolve authoritative educational identity and quarantine invalid historical links/scores", MIGRATION_V7_SQL),
 ]
+
 
 
 def _execute_sql_script(con: sqlite3.Connection, sql: str) -> None:
@@ -491,12 +500,14 @@ def quarantine_legacy_duplicate_attempt_links(con: sqlite3.Connection) -> Dict[s
 def repair_legacy_duplicate_links(
     con: sqlite3.Connection,
     resolved_assignments: Optional[Dict[str, str]] = None,
+    expected_link_states: Optional[Dict[str, Optional[str]]] = None,
 ) -> Dict[str, Any]:
     """Actionable repair path for quarantined legacy duplicate attempt links.
 
     Validates course, exercise version, mode, learner ownership, and attempt exclusivity.
     Reaffirming an unchanged link is an idempotent no-op preserving points, evidence, history, and completion.
     A genuinely changed link invalidates prior scores, updates history, and reopens the assessment.
+    Stale legacy repairs (already resolved or conflicting with current link state) are rejected with ConflictError.
     """
     with atomic_transaction(con):
         table_exists = con.execute(
@@ -565,6 +576,29 @@ def repair_legacy_duplicate_links(
                 if it["attempt_id"] == att_id:
                     resolved_list.append({"attempt_id": att_id, "assessment_item_id": item_id, "reaffirmed": True})
                     continue
+
+                # Defect 5: Stale legacy repair checks
+                # If this quarantined link was already resolved in the past, historical record does not authorize future relink!
+                if record["resolution_status"] == "resolved":
+                    raise ConflictError(
+                        f"Stale legacy repair: quarantined link for attempt '{att_id}' and item '{item_id}' was already resolved. "
+                        f"Item is currently linked to attempt '{it['attempt_id']}'."
+                    )
+
+                if expected_link_states is not None:
+                    exp_att = expected_link_states.get(item_id)
+                    if exp_att != it["attempt_id"]:
+                        raise ConflictError(
+                            f"Stale link expectation for item '{item_id}': expected current attempt '{exp_att}', found '{it['attempt_id']}'."
+                        )
+                else:
+                    # If expected_link_states not specified, cannot overwrite an active scored item
+                    if it["attempt_id"] is not None and it["points_awarded"] is not None:
+                        raise ConflictError(
+                            f"Cannot overwrite active scored attempt '{it['attempt_id']}' on item '{item_id}' via legacy repair "
+                            "without explicit expected_link_states."
+                        )
+
 
                 # Read item score history
                 try:
@@ -647,6 +681,204 @@ def repair_legacy_duplicate_links(
         }
 
 
+def resolve_and_quarantine_legacy_identities(con: sqlite3.Connection) -> Dict[str, Any]:
+    """Inspect and resolve legacy educational identities, quarantining invalid scored items.
+
+    1. Backs up assessment_items, attempts, and evidence prior to material changes.
+    2. Authoritatively resolves attempts and evidence when the exercise version was never modified (revision 1).
+    3. Leaves ambiguous attempts on modified exercises as NULL (unresolved).
+    4. Quarantines legacy scored assessment items whose attempts or evidence are unresolved or outdated.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    # Back up tables
+    con.execute("CREATE TABLE IF NOT EXISTS backup_v6_assessment_items AS SELECT * FROM assessment_items WHERE 1=0;")
+    cnt = con.execute("SELECT COUNT(*) FROM backup_v6_assessment_items").fetchone()[0]
+    if cnt == 0:
+        con.execute("INSERT INTO backup_v6_assessment_items SELECT * FROM assessment_items;")
+
+    con.execute("CREATE TABLE IF NOT EXISTS backup_v6_attempts AS SELECT * FROM attempts WHERE 1=0;")
+    cnt_att = con.execute("SELECT COUNT(*) FROM backup_v6_attempts").fetchone()[0]
+    if cnt_att == 0:
+        con.execute("INSERT INTO backup_v6_attempts SELECT * FROM attempts;")
+
+    con.execute("CREATE TABLE IF NOT EXISTS backup_v6_evidence AS SELECT * FROM evidence WHERE 1=0;")
+    cnt_ev = con.execute("SELECT COUNT(*) FROM backup_v6_evidence").fetchone()[0]
+    if cnt_ev == 0:
+        con.execute("INSERT INTO backup_v6_evidence SELECT * FROM evidence;")
+
+    # Check and update legacy_duplicate_attempt_links table columns if it exists
+    tbl_chk = con.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='legacy_duplicate_attempt_links'"
+    ).fetchone()
+    if tbl_chk:
+        cols = [r["name"] for r in con.execute("PRAGMA table_info(legacy_duplicate_attempt_links)").fetchall()]
+        if "resolution_status" not in cols:
+            con.execute("ALTER TABLE legacy_duplicate_attempt_links ADD COLUMN resolution_status TEXT NOT NULL DEFAULT 'quarantined';")
+        if "resolution_notes" not in cols:
+            con.execute("ALTER TABLE legacy_duplicate_attempt_links ADD COLUMN resolution_notes TEXT NOT NULL DEFAULT '';")
+
+    resolved_attempts_count = 0
+    # Inspect attempts
+    att_rows = con.execute(
+        "SELECT id, exercise_version_id, exercise_revision, exercise_content_hash FROM attempts WHERE exercise_revision IS NULL OR exercise_content_hash IS NULL"
+    ).fetchall()
+    for att in att_rows:
+        ex_row = con.execute("SELECT * FROM exercise_versions WHERE id = ?", (att["exercise_version_id"],)).fetchone()
+        if not ex_row:
+            continue
+        rev_hist_raw = ex_row["revision_history_json"] if "revision_history_json" in ex_row.keys() else "[]"
+        try:
+            rev_hist = json.loads(rev_hist_raw or "[]")
+        except Exception:
+            rev_hist = []
+
+        if len(rev_hist) == 0:
+            # Exercise version was NEVER modified since creation. Authoritative identity is revision 1.
+            try:
+                subparts = json.loads(ex_row["subparts_json"] or "[]")
+            except Exception:
+                subparts = []
+            try:
+                rubric = json.loads(ex_row["rubric_json"] or "{}")
+            except Exception:
+                rubric = {}
+            c_hash = compute_exercise_version_hash(
+                ex_row["question_text"],
+                ex_row["reference_solution"],
+                rubric,
+                subparts,
+            )
+            con.execute(
+                "UPDATE attempts SET exercise_revision = 1, exercise_content_hash = ? WHERE id = ?",
+                (c_hash, att["id"]),
+            )
+            resolved_attempts_count += 1
+            # Update attempt_events work_submissions
+            events = con.execute(
+                "SELECT id, event_metadata_json FROM attempt_events WHERE attempt_id = ? AND event_type = 'work_submission'",
+                (att["id"],),
+            ).fetchall()
+            for ev in events:
+                try:
+                    meta = json.loads(ev["event_metadata_json"] or "{}")
+                except Exception:
+                    meta = {}
+                if meta.get("exercise_revision") is None or not meta.get("exercise_content_hash"):
+                    meta["exercise_revision"] = 1
+                    meta["exercise_content_hash"] = c_hash
+                    con.execute(
+                        "UPDATE attempt_events SET event_metadata_json = ? WHERE id = ?",
+                        (json.dumps(meta), ev["id"]),
+                    )
+            # Update evidence
+            con.execute(
+                "UPDATE evidence SET exercise_revision = 1, exercise_content_hash = ? WHERE attempt_id = ? AND (exercise_revision IS NULL OR exercise_content_hash IS NULL)",
+                (c_hash, att["id"]),
+            )
+
+    # Inspect assessment_items
+    quarantined_items_count = 0
+    scored_items = con.execute(
+        "SELECT * FROM assessment_items WHERE points_awarded IS NOT NULL OR score_status = 'scored'"
+    ).fetchall()
+    for item in scored_items:
+        should_quarantine = False
+        quarantine_reason = ""
+        att_id = item["attempt_id"]
+        if not att_id:
+            should_quarantine = True
+            quarantine_reason = "Assessment item scored without linked attempt."
+        else:
+            att = con.execute("SELECT * FROM attempts WHERE id = ?", (att_id,)).fetchone()
+            ex_ver = con.execute("SELECT * FROM exercise_versions WHERE id = ?", (item["exercise_version_id"],)).fetchone()
+            if not att or not ex_ver:
+                should_quarantine = True
+                quarantine_reason = "Linked attempt or exercise version not found."
+            else:
+                try:
+                    rev_hist = json.loads(ex_ver["revision_history_json"] or "[]")
+                except Exception:
+                    rev_hist = []
+                current_rev = len(rev_hist) + 1
+                try:
+                    subparts = json.loads(ex_ver["subparts_json"] or "[]")
+                except Exception:
+                    subparts = []
+                try:
+                    rubric = json.loads(ex_ver["rubric_json"] or "{}")
+                except Exception:
+                    rubric = {}
+                current_hash = compute_exercise_version_hash(
+                    ex_ver["question_text"],
+                    ex_ver["reference_solution"],
+                    rubric,
+                    subparts,
+                )
+
+                if att["exercise_revision"] is None or att["exercise_content_hash"] is None:
+                    should_quarantine = True
+                    quarantine_reason = f"Linked attempt '{att_id}' has unresolved educational identity."
+                elif att["exercise_revision"] != current_rev or att["exercise_content_hash"] != current_hash:
+                    should_quarantine = True
+                    quarantine_reason = f"Linked attempt '{att_id}' is for outdated exercise revision {att['exercise_revision']} (current revision is {current_rev})."
+                else:
+                    try:
+                        ev_ids = json.loads(item["evidence_ids_json"] or "[]")
+                    except Exception:
+                        ev_ids = []
+                    if not ev_ids:
+                        should_quarantine = True
+                        quarantine_reason = "No supporting evidence IDs recorded for scored item."
+                    else:
+                        for eid in ev_ids:
+                            ev = con.execute("SELECT * FROM evidence WHERE id = ?", (eid,)).fetchone()
+                            if not ev or ev["status"] != "active":
+                                should_quarantine = True
+                                quarantine_reason = f"Supporting evidence '{eid}' is not active."
+                                break
+                            if ev["exercise_revision"] is None or ev["exercise_content_hash"] is None:
+                                should_quarantine = True
+                                quarantine_reason = f"Supporting evidence '{eid}' has unresolved educational identity."
+                                break
+                            if ev["exercise_revision"] != current_rev or ev["exercise_content_hash"] != current_hash:
+                                should_quarantine = True
+                                quarantine_reason = f"Supporting evidence '{eid}' is for outdated exercise revision {ev['exercise_revision']}."
+                                break
+
+        if should_quarantine:
+            quarantined_items_count += 1
+            try:
+                hist = json.loads(item["score_history_json"] or "[]")
+            except Exception:
+                hist = []
+            hist.append({
+                "action": "invalidated_unresolved_or_outdated_identity",
+                "previous_points": item["points_awarded"],
+                "previous_score_status": item["score_status"],
+                "reason": f"Legacy assessment item scored with outdated or unresolved educational identity; quarantined to pending_review. ({quarantine_reason})",
+                "recorded_at": now,
+            })
+            con.execute(
+                """
+                UPDATE assessment_items SET
+                    points_awarded = NULL,
+                    score_status = 'pending_review',
+                    score_history_json = ?
+                WHERE id = ?
+                """,
+                (json.dumps(hist), item["id"]),
+            )
+            con.execute(
+                "UPDATE assessments SET status = 'open' WHERE id = ?",
+                (item["assessment_id"],),
+            )
+
+    return {
+        "resolved_attempts_count": resolved_attempts_count,
+        "quarantined_items_count": quarantined_items_count,
+    }
+
+
 def run_migrations(con: sqlite3.Connection, auto_quarantine_duplicates: bool = True) -> None:
     """Ensure schema_migrations exists and apply any pending migrations in order."""
     with atomic_transaction(con):
@@ -682,7 +914,12 @@ def run_migrations(con: sqlite3.Connection, auto_quarantine_duplicates: bool = T
                         quarantine_legacy_duplicate_attempt_links(con)
 
                 _execute_sql_script(con, sql)
+
+                if version == 7:
+                    resolve_and_quarantine_legacy_identities(con)
+
                 con.execute(
                     "INSERT INTO schema_migrations (version, applied_at, description) VALUES (?, datetime('now'), ?)",
                     (version, desc),
                 )
+

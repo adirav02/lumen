@@ -10,11 +10,15 @@ from .api import LumenCore
 from .errors import LumenError
 
 
+def _reject_json_constants(c: str) -> Any:
+    raise ValueError(f"Non-standard JSON constant rejected: {c}")
+
+
 def parse_json_payload(raw_json: Optional[str]) -> Dict[str, Any]:
     if raw_json:
         try:
-            val = json.loads(raw_json)
-        except json.JSONDecodeError as e:
+            val = json.loads(raw_json, parse_constant=_reject_json_constants)
+        except (json.JSONDecodeError, ValueError) as e:
             raise ValueError(f"Malformed JSON argument: {e}")
         if not isinstance(val, dict):
             raise ValueError(f"JSON input must be an object (dictionary), got {type(val).__name__}.")
@@ -23,8 +27,8 @@ def parse_json_payload(raw_json: Optional[str]) -> Dict[str, Any]:
         content = sys.stdin.read().strip()
         if content:
             try:
-                val = json.loads(content)
-            except json.JSONDecodeError as e:
+                val = json.loads(content, parse_constant=_reject_json_constants)
+            except (json.JSONDecodeError, ValueError) as e:
                 raise ValueError(f"Malformed stdin JSON: {e}")
             if not isinstance(val, dict):
                 raise ValueError(f"JSON input must be an object (dictionary), got {type(val).__name__}.")
@@ -33,7 +37,18 @@ def parse_json_payload(raw_json: Optional[str]) -> Dict[str, Any]:
 
 
 def output_json(payload: Dict[str, Any], exit_code: int = 0) -> None:
-    sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    try:
+        data = json.dumps(payload, ensure_ascii=False, allow_nan=False) + "\n"
+    except (ValueError, TypeError) as e:
+        err_payload = {
+            "status": "error",
+            "error_code": "SERIALIZATION_ERROR",
+            "message": f"Output contained non-standard JSON values (e.g. NaN/Inf): {e}",
+            "details": {},
+        }
+        data = json.dumps(err_payload, ensure_ascii=False, allow_nan=False) + "\n"
+        exit_code = 1
+    sys.stdout.write(data)
     sys.stdout.flush()
     sys.exit(exit_code)
 
@@ -305,6 +320,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                 elif op == "repair_legacy_duplicate_links":
                     res = core.repair_legacy_duplicate_links(
                         resolved_assignments=payload.get("resolved_assignments"),
+                        expected_link_states=payload.get("expected_link_states"),
                     )
                     output_json({"status": "success", "data": res})
 
@@ -339,6 +355,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                         item_order=payload["item_order"],
                         points_awarded=payload["points_awarded"],
                         attempt_id=payload.get("attempt_id"),
+                        allow_partial=payload.get("allow_partial", False),
                         request_id=req_id,
                     )
                     if isinstance(res, dict) and "status" in res:

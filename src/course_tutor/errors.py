@@ -188,3 +188,11 @@ class LegacyDuplicateAttemptLinkError(LumenError):
             error_code="LEGACY_DUPLICATE_ATTEMPT_LINK",
             details=d,
         )
+
+
+class ConflictError(LumenError):
+    """Raised when an operation conflicts with the current state of an entity or resolution."""
+
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+        super().__init__(message, error_code="CONFLICT_ERROR", details=details or {})
+
