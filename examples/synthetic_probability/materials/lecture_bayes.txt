@@ -1,0 +1,25 @@
+# Probability 101 - Lecture 1: Conditional Probability & Bayes' Theorem
+
+## Introduction
+Probability spaces are defined by a sample space $\Omega$, an event space $\mathcal{F}$, and a probability measure $P$.
+
+### Definition: Conditional Probability
+Content: For any two events A and B in sample space $\Omega$, the conditional probability of A given B is P(A|B) = P(A ∩ B) / P(B).
+Assumptions: P(B) > 0; Events A and B are in the same probability space
+Symbols: P(A|B) = conditional probability of A given B; P(A ∩ B) = joint probability of A and B; P(B) = marginal probability of B
+Exceptions: Undefined when P(B) = 0
+Dependencies: probability-space
+
+### Theorem: Law of Total Probability
+Content: If {B_1, B_2, ..., B_n} forms a partition of sample space $\Omega$, then for any event A: P(A) = \sum_{i=1}^n P(A|B_i) * P(B_i).
+Assumptions: Partition is pairwise disjoint: B_i ∩ B_j = \emptyset for all i != j; Partition covers sample space: \cup B_i = \Omega; P(B_i) > 0 for all i
+Symbols: \sum = summation over partition; B_i = partition element
+Exceptions: None when partition conditions hold
+Dependencies: conditional-probability
+
+### Theorem: Bayes' Theorem
+Content: P(A|B) = P(B|A) * P(A) / P(B). When using a partition {A_1, ..., A_n}, P(A_k|B) = P(B|A_k)*P(A_k) / \sum_{i} P(B|A_i)*P(A_i).
+Assumptions: P(B) > 0; P(A_k) > 0; Events form valid probability space
+Symbols: P(A|B) = posterior probability; P(A) = prior probability; P(B|A) = likelihood; P(B) = evidence
+Exceptions: Undefined if P(B) = 0
+Dependencies: conditional-probability, law-of-total-probability
