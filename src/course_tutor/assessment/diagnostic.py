@@ -26,6 +26,7 @@ from ..storage.repositories import (
 )
 from ..learning.policy import (
     are_all_required_subparts_evaluated,
+    check_evidence_eligibility_chain,
     get_required_subparts,
     is_identity_resolved,
     is_evidence_currently_applicable,
@@ -334,6 +335,11 @@ class DiagnosticService:
         """Record rubric score for an assessment item requiring validated observed work and supporting evidence (Defect 1, 2, 4)."""
         points_num = validate_finite_number(points_awarded, "Points awarded", min_val=0.0)
 
+        if not isinstance(allow_partial, bool):
+            raise ValidationError(
+                f"allow_partial must be a boolean (True or False), got {type(allow_partial).__name__} ({allow_partial!r})."
+            )
+
         if isinstance(item_order, bool) or not isinstance(item_order, int) or item_order < 1:
             raise ValidationError(f"Invalid item order: {item_order!r}.")
 
@@ -473,18 +479,16 @@ class DiagnosticService:
                 )
 
             for ev in evaluated_evidence:
-                if not is_identity_resolved(ev.exercise_revision, ev.exercise_content_hash):
+                ok, reason = check_evidence_eligibility_chain(
+                    self.con,
+                    ev,
+                    current_rev,
+                    current_hash,
+                    learner_id=attempt.learner_id,
+                )
+                if not ok:
                     raise ValidationError(
-                        f"Evidence '{ev.id}' has unresolved educational identity. Cannot support confirmed score."
-                    )
-                if ev.exercise_revision != current_rev:
-                    raise ValidationError(
-                        f"Evidence '{ev.id}' is from outdated exercise revision {ev.exercise_revision}, "
-                        f"expected current revision {current_rev}."
-                    )
-                if ev.exercise_content_hash != current_hash:
-                    raise ValidationError(
-                        f"Evidence '{ev.id}' content hash does not match current exercise version content hash."
+                        f"Evidence '{ev.id}' fails provenance eligibility chain: {reason}. Cannot support confirmed score."
                     )
 
             # Defect 1: Score vs evaluated evidence alignment
@@ -492,14 +496,18 @@ class DiagnosticService:
                 e.demonstrated_level in ("independent_mastery", "assisted_success", "partial_progress")
                 for e in evaluated_evidence
             )
+            has_incorrect_evidence = any(
+                e.demonstrated_level == "incorrect"
+                for e in evaluated_evidence
+            )
             if points_num > 0 and not has_positive_evidence:
                 raise ValidationError(
                     f"Cannot award positive points ({points_num}) when all evaluated evidence is incorrect."
                 )
 
-            if points_num == 0 and all(e.demonstrated_level == "independent_mastery" for e in evaluated_evidence):
+            if points_num == 0 and not has_incorrect_evidence:
                 raise ValidationError(
-                    "Cannot award zero points when all evaluated evidence demonstrates independent mastery."
+                    "Cannot award zero points when all evaluated evidence is positive. Zero score requires evaluated incorrect work."
                 )
 
             # Defect 4: Complete-item status requires all required rubric/subpart evaluation
@@ -511,6 +519,11 @@ class DiagnosticService:
                     raise ValidationError(
                         f"Cannot score item: declared subparts missing evaluated evidence: {sorted(missing_subparts)}. "
                         "Complete all required subpart evaluations before recording score, or pass allow_partial=True for partial scoring."
+                    )
+                if points_num >= item.max_points and item.max_points > 0:
+                    raise ValidationError(
+                        f"Cannot award full credit ({points_num}/{item.max_points}) when required subparts are missing: {sorted(missing_subparts)}. "
+                        "Full credit requires all required subparts to be completed and evaluated."
                     )
                 score_status = "partially_scored"
             else:
@@ -662,6 +675,23 @@ class DiagnosticService:
                 if is_scored and it.evidence_ids:
                     item_active_evs = [e for e in item_active_evs if e.id in it.evidence_ids]
 
+                ex_ident = ex_ver_cache.get(it.exercise_version_id)
+                if ex_ident:
+                    eligible_item_evs = []
+                    for ev in item_active_evs:
+                        ok, _ = check_evidence_eligibility_chain(
+                            self.con,
+                            ev,
+                            ex_ident[0],
+                            ex_ident[1],
+                            learner_id=it.learner_id,
+                        )
+                        if ok:
+                            eligible_item_evs.append(ev)
+                    item_active_evs = eligible_item_evs
+                else:
+                    item_active_evs = []
+
                 if item_active_evs:
                     subpart_levels = []
                     has_sol_before = False
@@ -762,7 +792,9 @@ class DiagnosticService:
                     continue
                 ex_ident = ex_ver_cache.get(e.exercise_version_id)
                 if ex_ident and e.exercise_revision == ex_ident[0] and e.exercise_content_hash == ex_ident[1]:
-                    t_evaluated_evs.append(e)
+                    ok, _ = check_evidence_eligibility_chain(self.con, e, ex_ident[0], ex_ident[1])
+                    if ok:
+                        t_evaluated_evs.append(e)
 
             if t_evaluated_evs:
                 topic_coverage[t_name] = {
@@ -852,6 +884,7 @@ class DiagnosticService:
             "assistance": assistance_summary,
             "pending_work": pending_work,
             "items": items_summary,
+            "items_detail": items_summary,
             "caveats": [
                 "Score reflects observed rubric points on attempted items; not an exam pass probability.",
                 "Unattempted items and untested topics are reported as unassessed rather than penalized as failures.",

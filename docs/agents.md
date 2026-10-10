@@ -6,7 +6,7 @@ Applies to Codex, Claude Code, Google Antigravity, and future adapters. Follow t
 
 Read `goal.md` once when beginning implementation or reviewing scope, then the relevant section of `plan.md`. During an established tutoring session, load only the course brief and needed workflow details. Do not repeatedly inject the full plan, all course materials, or the entire conversation history.
 
-This package currently contains planning and instruction files, not an implemented tutor runtime. Inspect actual code and available tools before invoking a command. Do not pretend that planned tools, adapters, or save operations exist.
+The shared package contains a fully implemented and verified tutor runtime (`lumen`), CLI, database migrations (v1–v8), extraction pipeline, diagnostic assessment, and provenance tracking. Inspect actual code and available tools before invoking a command.
 
 ## Shared operating rules
 
@@ -46,7 +46,7 @@ In diagnostics:
 
 - Build the current milestone in `plan.md`, with the smallest complete path through its acceptance checks. Do not silently implement deferred scope.
 - Keep storage, retrieval, idempotency, provenance, and assessment computation in the shared core. Adapters translate host execution and file/image access only.
-- Make database changes through versioned migrations (v1–v7). Back up before a migration with material data risk; enable foreign keys on every connection and test restore. Detect and quarantine legacy constraint conflicts (e.g. duplicate attempt links in schema v4 to `backup_v4_assessment_items` and `legacy_duplicate_attempt_links`; unresolved identities in schema v6 to `backup_v6_*`) before unique index creation or scoring.
+- Make database changes through versioned migrations (v1–v8). Back up before a migration with material data risk; enable foreign keys on every connection and test restore. Detect and quarantine legacy constraint conflicts (e.g. duplicate attempt links in schema v4 to `backup_v4_assessment_items` and `legacy_duplicate_attempt_links`; unresolved identities in schema v6 to `backup_v6_*`; historical scores and incompatible evidence in schema v7 to `backup_v7_*`) before unique index creation or scoring.
 - Do not hold a database write transaction during model calls or file extraction. Do not sync a live database through Git or shared network folders.
 - Protect authoritative checks and writes together within atomic immediate transactions (`atomic_transaction(self.con)`).
 - Validate verification checks with strict schema: allowed keys `{"status", "state", "reason", "notes", "metadata", "score"}`; reject conflicting `status` and `state`; disallow duplicate check names (case-insensitive); reject failing or pending statuses (`failed`, `falsified`, `rejected`, `pending`, `unknown`). Check `score` must be a finite numeric value >= 0 (rejecting booleans, NaN, Inf); `reason` and `notes` must be strings; nested metadata numbers must be strictly finite. CLI input rejects non-standard JSON constants (`NaN`, `Infinity`) with exit code 1; CLI output produces strictly valid JSON (`allow_nan=False`).

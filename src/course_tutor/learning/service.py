@@ -28,6 +28,7 @@ from ..storage.repositories import (
     compute_exercise_version_hash,
 )
 from .policy import (
+    check_evidence_eligibility_chain,
     determine_demonstrated_level,
     is_identity_resolved,
     is_evidence_currently_applicable,
@@ -149,6 +150,31 @@ class LearningService:
             attempt = self.attempt_repo.get_attempt(attempt_id)
             if not attempt:
                 raise ValidationError(f"Attempt '{attempt_id}' not found.")
+
+            ex_ver = self.exercise_repo.get_exercise_version(attempt.exercise_version_id)
+            if not ex_ver:
+                raise ValidationError(f"Exercise version '{attempt.exercise_version_id}' not found.")
+
+            current_rev = len(ex_ver.revision_history) + 1
+            current_hash = compute_exercise_version_hash(
+                ex_ver.question_text,
+                ex_ver.reference_solution,
+                ex_ver.rubric,
+                ex_ver.subparts,
+            )
+
+            if not is_identity_resolved(attempt.exercise_revision, attempt.exercise_content_hash):
+                raise ValidationError(
+                    f"Attempt '{attempt_id}' has unresolved educational identity. "
+                    "Cannot resume attempt on exercise with unconfirmed identity. Start a fresh attempt."
+                )
+
+            if attempt.exercise_revision != current_rev or attempt.exercise_content_hash != current_hash:
+                raise ValidationError(
+                    f"Cannot resume stale attempt '{attempt_id}': attempt is for exercise revision {attempt.exercise_revision}, "
+                    f"which does not match current revision {current_rev}. Start a fresh attempt for the updated exercise version."
+                )
+
             attempt.status = "open"
             return self.attempt_repo.update_attempt(attempt, expected_revision)
 
@@ -448,13 +474,15 @@ class LearningService:
                     if ex_ver
                     else None
                 )
-                is_currently_applicable = (
-                    ex_ver is not None
-                    and is_identity_resolved(old_ev.exercise_revision, old_ev.exercise_content_hash)
-                    and old_ev.exercise_revision == current_rev
-                    and old_ev.exercise_content_hash == current_hash
-                    and old_ev.status == "active"
-                )
+                if ex_ver is not None and current_rev is not None and current_hash is not None:
+                    is_currently_applicable, _ = check_evidence_eligibility_chain(
+                        self.con,
+                        old_ev,
+                        current_rev,
+                        current_hash,
+                    )
+                else:
+                    is_currently_applicable = False
 
                 if is_currently_applicable:
                     target_status = "active"

@@ -1,7 +1,7 @@
 # Course Tutor — Implementation Plan
 
-Updated: 2026-10-09.  
-Status: specification only. Runtime, database schema, extraction pipeline, and host adapters are not implemented yet.  
+Updated: 2026-10-10.  
+Status: implemented and verified. Core runtime, schema migrations (001–008), extraction pipeline, diagnostic assessment, provenance tracking, and CLI are fully implemented with 99 passing tests and synthetic demo verification.  
 Fixed decisions: SQLite; preserved original files; evidence-based assessment; one shared core for Codex, Claude Code, and Google Antigravity.
 
 ## 1. Deliverables and document precedence

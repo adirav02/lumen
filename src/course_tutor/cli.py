@@ -7,7 +7,8 @@ import sys
 from typing import Any, Dict, List, Optional
 
 from .api import LumenCore
-from .errors import LumenError
+from .errors import LumenError, ValidationError
+from .models import validate_all_finite_numbers
 
 
 def _reject_json_constants(c: str) -> Any:
@@ -22,6 +23,7 @@ def parse_json_payload(raw_json: Optional[str]) -> Dict[str, Any]:
             raise ValueError(f"Malformed JSON argument: {e}")
         if not isinstance(val, dict):
             raise ValueError(f"JSON input must be an object (dictionary), got {type(val).__name__}.")
+        validate_all_finite_numbers(val, "payload")
         return val
     if not sys.stdin.isatty():
         content = sys.stdin.read().strip()
@@ -32,6 +34,7 @@ def parse_json_payload(raw_json: Optional[str]) -> Dict[str, Any]:
                 raise ValueError(f"Malformed stdin JSON: {e}")
             if not isinstance(val, dict):
                 raise ValueError(f"JSON input must be an object (dictionary), got {type(val).__name__}.")
+            validate_all_finite_numbers(val, "payload")
             return val
     return {}
 
@@ -66,7 +69,7 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     try:
         payload = parse_json_payload(args.json_input)
-    except ValueError as e:
+    except (ValueError, ValidationError) as e:
         output_json({
             "status": "error",
             "error_code": "INVALID_JSON_INPUT",

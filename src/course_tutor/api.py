@@ -1,5 +1,6 @@
 """Unified high-level API facade for Lumen core operations with idempotency and transactional guarantees."""
 
+import json
 from pathlib import Path
 import sqlite3
 from typing import Any, Dict, List, Optional, Union
@@ -21,6 +22,7 @@ from .models import (
     Topic,
     compute_canonical_hash,
     utc_now_iso,
+    validate_all_finite_numbers,
 )
 from .retrieval.read import read_source_region, read_units
 from .retrieval.search import SearchService
@@ -139,9 +141,14 @@ class LumenCore:
     ) -> Dict[str, Any]:
         """Wrap mutating operations with request hashing and idempotency receipts (F15, F16)."""
         self._verify_not_detached()
+        validate_all_finite_numbers(params, "parameters")
         if not request_id:
             # Non-idempotent direct execution
             data = func()
+            try:
+                json.dumps(data, allow_nan=False)
+            except (ValueError, TypeError) as e:
+                raise ValidationError(f"Response serialization failed (non-finite or non-serializable value): {e}")
             return {"status": "success", "data": data}
 
         intent = {
@@ -175,6 +182,11 @@ class LumenCore:
                 }
 
             data = func()
+            # Test response serialization before committing transaction or recording receipt
+            try:
+                json.dumps(data, allow_nan=False)
+            except (ValueError, TypeError) as e:
+                raise ValidationError(f"Response serialization failed (non-finite or non-serializable value): {e}")
 
             affected_ids = []
             if isinstance(data, dict):
@@ -765,6 +777,10 @@ class LumenCore:
         request_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         self._verify_not_detached()
+        if not isinstance(allow_partial, bool):
+            raise ValidationError(
+                f"allow_partial must be a boolean (True or False), got {type(allow_partial).__name__} ({allow_partial!r})."
+            )
         if not request_id:
             return self.diagnostic_service.record_assessment_item_score(
                 assessment_id=assessment_id,

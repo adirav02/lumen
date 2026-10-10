@@ -1,7 +1,7 @@
 # Course Tutor — Goal
 
-Status: approved product direction; implementation has not started.  
-Updated: 2026-10-09.  
+Status: approved product direction; core implementation, migrations 001–008, and invariant guarantees are fully implemented and verified.  
+Updated: 2026-10-10.  
 Audience: product owner, implementers, and agents working on this project.
 
 ## Purpose
@@ -72,6 +72,7 @@ Live multi-device synchronization, a custom chat client, a hosted multi-user ser
 13. **Secure Path Sandboxing on Restore**: Restore operations treat archives, manifests, and database paths as untrusted input. Path resolution strictly sandboxes extraction, rejecting Zip Slip, symlinks, absolute paths, and path traversal sequences (`..`).
 14. **Evidence-Based Runtime Reporting**: Supported runtimes, operating systems, and host integrations are reported honestly according to verified evidence. Platforms lacking flock exclusion explicitly report locking as unsupported.
 15. **Safe Legacy Schema Migration, Identity Quarantine, and Link Repair**: Upgrades detect legacy constraint ambiguities and unresolved identities prior to applying unique indexes or scoring, creating pre-migration backups (`backup_v4_*`, `backup_v6_*`), auditing ambiguous records into quarantine tables with pending-review status, and reopening affected assessments. Stale legacy repairs on already-resolved records or uncoordinated overwrites of active scored links without explicit `expected_link_states` are rejected with `ConflictError`.
+16. **Provenance Chain Eligibility, Score Revalidation, and Projection Rebuilding**: Evidence eligibility requires that the entire provenance chain (evidence record, attempt, committed submission, learner ownership, and current exercise version) is valid and resolved. Obsolete attempts cannot legitimize current-version evidence, scoring, mastery, coverage, or recommendations. Migration 008 backs up tables (`backup_v7_*`), revalidates historical scores against complete policy (quarantining invalid items to `pending_review` with audit history and reopening assessments), quarantines incompatible active evidence, and rebuilds all `topic_state` projections within the migration transaction. Outdated attempts cannot be resumed (`resume_attempt` rejects stale attempts, and `course_brief` omits stale resume actions). Exponent overflow and non-finite numbers in JSON are rejected before execution, and response serialization is tested before transaction commit.
 
 ## Release evidence
 

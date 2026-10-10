@@ -5,7 +5,16 @@ import json
 import sqlite3
 from typing import Any, Dict, List, Optional, Tuple
 from ..errors import ConflictError, LegacyDuplicateAttemptLinkError, ValidationError
-from ..models import compute_exercise_version_hash
+from ..models import (
+    EVALUATED_DEMONSTRATED_LEVELS,
+    OBSERVATION_DEMONSTRATED_LEVELS,
+    compute_exercise_version_hash,
+    is_identity_resolved,
+)
+from ..learning.policy import (
+    check_evidence_eligibility_chain,
+    get_required_subparts,
+)
 from .db import atomic_transaction
 
 MIGRATION_V1_SQL = """
@@ -319,6 +328,14 @@ CREATE TABLE IF NOT EXISTS backup_v6_attempts AS SELECT * FROM attempts WHERE 1=
 CREATE TABLE IF NOT EXISTS backup_v6_evidence AS SELECT * FROM evidence WHERE 1=0;
 """
 
+MIGRATION_V8_SQL = """
+CREATE TABLE IF NOT EXISTS backup_v7_assessment_items AS SELECT * FROM assessment_items WHERE 1=0;
+CREATE TABLE IF NOT EXISTS backup_v7_assessments AS SELECT * FROM assessments WHERE 1=0;
+CREATE TABLE IF NOT EXISTS backup_v7_evidence AS SELECT * FROM evidence WHERE 1=0;
+CREATE TABLE IF NOT EXISTS backup_v7_topic_state AS SELECT * FROM topic_state WHERE 1=0;
+CREATE TABLE IF NOT EXISTS backup_v7_attempt_events AS SELECT * FROM attempt_events WHERE 1=0;
+"""
+
 MIGRATIONS: List[Tuple[int, str, str]] = [
     (1, "Initial schema for Lumen core with FTS5", MIGRATION_V1_SQL),
     (2, "Persist complete extracted sections and source locators", MIGRATION_V2_SQL),
@@ -327,6 +344,7 @@ MIGRATIONS: List[Tuple[int, str, str]] = [
     (5, "Enforce unique non-null attempt-to-item link in assessment_items", MIGRATION_V5_SQL),
     (6, "Educational content identity tracking on attempts and evidence", MIGRATION_V6_SQL),
     (7, "Resolve authoritative educational identity and quarantine invalid historical links/scores", MIGRATION_V7_SQL),
+    (8, "Repair historical scores, quarantine incompatible evidence, and rebuild projections", MIGRATION_V8_SQL),
 ]
 
 
@@ -879,6 +897,222 @@ def resolve_and_quarantine_legacy_identities(con: sqlite3.Connection) -> Dict[st
     }
 
 
+def repair_historical_scores_and_rebuild_projections(con: sqlite3.Connection) -> Dict[str, Any]:
+    """Repair historical scores, quarantine incompatible evidence, and rebuild projections (Migration 008).
+
+    1. Backs up assessment_items, assessments, evidence, topic_state, and attempt_events to backup_v7_* tables.
+    2. Quarantines active evidence whose provenance chain is unresolved or incompatible with current exercise version.
+    3. Revalidates scored assessment items against complete scoring policy:
+       - required subparts completeness
+       - presence of active evaluated evidence
+       - score vs evidence alignment (zero score requires evaluated incorrect work, positive score requires positive work)
+       Quarantines invalid items to pending_review with audit history, reopening affected assessments.
+    4. Rebuilds all topic_state projections inside the migration transaction using the shared eligibility policy.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+
+    # 1. Back up tables
+    for tbl in ["assessment_items", "assessments", "evidence", "topic_state", "attempt_events"]:
+        cnt = con.execute(f"SELECT COUNT(*) FROM backup_v7_{tbl}").fetchone()[0]
+        if cnt == 0:
+            con.execute(f"INSERT INTO backup_v7_{tbl} SELECT * FROM {tbl};")
+
+    # 2. Quarantine active evidence failing provenance chain
+    quarantined_evidence_count = 0
+    active_ev_rows = con.execute("SELECT * FROM evidence WHERE status = 'active'").fetchall()
+    for ev in active_ev_rows:
+        ex_ver_id = ev["exercise_version_id"]
+        ex_row = con.execute("SELECT * FROM exercise_versions WHERE id = ?", (ex_ver_id,)).fetchone()
+        should_quarantine = False
+        quarantine_reason = ""
+        if not ex_row:
+            should_quarantine = True
+            quarantine_reason = f"Exercise version '{ex_ver_id}' not found."
+        else:
+            try:
+                rev_hist = json.loads(ex_row["revision_history_json"] or "[]")
+            except Exception:
+                rev_hist = []
+            current_rev = len(rev_hist) + 1
+            try:
+                subparts = json.loads(ex_row["subparts_json"] or "[]")
+            except Exception:
+                subparts = []
+            try:
+                rubric = json.loads(ex_row["rubric_json"] or "{}")
+            except Exception:
+                rubric = {}
+            current_hash = compute_exercise_version_hash(
+                ex_row["question_text"],
+                ex_row["reference_solution"],
+                rubric,
+                subparts,
+            )
+            chain_ok, reason = check_evidence_eligibility_chain(con, ev, current_rev, current_hash)
+            if not chain_ok:
+                should_quarantine = True
+                quarantine_reason = reason
+
+        if should_quarantine:
+            quarantined_evidence_count += 1
+            con.execute(
+                "UPDATE evidence SET status = 'pending_review', updated_at = ? WHERE id = ?",
+                (now, ev["id"]),
+            )
+
+    # 3. Revalidate and quarantine historical scores in assessment_items
+    quarantined_items_count = 0
+    scored_items = con.execute(
+        "SELECT * FROM assessment_items WHERE points_awarded IS NOT NULL OR score_status IN ('scored', 'partially_scored')"
+    ).fetchall()
+    for item in scored_items:
+        should_quarantine = False
+        quarantine_reason = ""
+        att_id = item["attempt_id"]
+        if not att_id:
+            should_quarantine = True
+            quarantine_reason = "Assessment item scored without linked attempt."
+        else:
+            att = con.execute("SELECT * FROM attempts WHERE id = ?", (att_id,)).fetchone()
+            ex_ver = con.execute("SELECT * FROM exercise_versions WHERE id = ?", (item["exercise_version_id"],)).fetchone()
+            if not att or not ex_ver:
+                should_quarantine = True
+                quarantine_reason = "Linked attempt or exercise version not found."
+            else:
+                try:
+                    rev_hist = json.loads(ex_ver["revision_history_json"] or "[]")
+                except Exception:
+                    rev_hist = []
+                current_rev = len(rev_hist) + 1
+                try:
+                    subparts = json.loads(ex_ver["subparts_json"] or "[]")
+                except Exception:
+                    subparts = []
+                try:
+                    rubric = json.loads(ex_ver["rubric_json"] or "{}")
+                except Exception:
+                    rubric = {}
+                current_hash = compute_exercise_version_hash(
+                    ex_row["question_text"] if "question_text" in ex_ver.keys() else ex_ver["question_text"],
+                    ex_ver["reference_solution"],
+                    rubric,
+                    subparts,
+                )
+
+                if not is_identity_resolved(att["exercise_revision"], att["exercise_content_hash"]):
+                    should_quarantine = True
+                    quarantine_reason = f"Linked attempt '{att_id}' has unresolved educational identity."
+                elif att["exercise_revision"] != current_rev or att["exercise_content_hash"] != current_hash:
+                    should_quarantine = True
+                    quarantine_reason = f"Linked attempt '{att_id}' is for outdated exercise revision {att['exercise_revision']} (current revision is {current_rev})."
+                else:
+                    try:
+                        ev_ids = json.loads(item["evidence_ids_json"] or "[]")
+                    except Exception:
+                        ev_ids = []
+
+                    active_evs_for_att = con.execute(
+                        "SELECT * FROM evidence WHERE attempt_id = ? AND status = 'active'",
+                        (att_id,),
+                    ).fetchall()
+                    if ev_ids:
+                        matching_evs = [e for e in active_evs_for_att if e["id"] in ev_ids]
+                    else:
+                        matching_evs = list(active_evs_for_att)
+
+                    evaluated_evs = [e for e in matching_evs if e["demonstrated_level"] in EVALUATED_DEMONSTRATED_LEVELS]
+
+                    if not evaluated_evs:
+                        should_quarantine = True
+                        quarantine_reason = "Historical item has missing evaluated evidence (observation-only or no supporting evaluated evidence)."
+                    else:
+                        ineligible_evs = []
+                        for ev in evaluated_evs:
+                            ok, r = check_evidence_eligibility_chain(con, ev, current_rev, current_hash)
+                            if not ok:
+                                ineligible_evs.append((ev, r))
+                        if ineligible_evs:
+                            should_quarantine = True
+                            quarantine_reason = f"Supporting evaluated evidence failed provenance eligibility chain: {ineligible_evs[0][1]}."
+                        else:
+                            req_subparts = get_required_subparts(subparts)
+                            evaluated_subparts = {
+                                e["subpart_key"]
+                                for e in evaluated_evs
+                                if e["subpart_key"]
+                            }
+                            missing_sub = req_subparts - evaluated_subparts
+                            if missing_sub:
+                                should_quarantine = True
+                                quarantine_reason = f"Declared subparts missing evaluated evidence: {sorted(missing_sub)}."
+                            else:
+                                pts = item["points_awarded"]
+                                if pts is not None:
+                                    has_positive = any(
+                                        e["demonstrated_level"] in ("independent_mastery", "assisted_success", "partial_progress")
+                                        for e in evaluated_evs
+                                    )
+                                    has_incorrect = any(
+                                        e["demonstrated_level"] == "incorrect"
+                                        for e in evaluated_evs
+                                    )
+                                    if pts > 0 and not has_positive:
+                                        should_quarantine = True
+                                        quarantine_reason = f"Points awarded {pts} > 0 but all evaluated evidence is incorrect."
+                                    elif pts == 0 and not has_incorrect:
+                                        should_quarantine = True
+                                        quarantine_reason = "Points awarded is 0 but all evaluated evidence is positive (zero score requires evaluated incorrect work)."
+
+        if should_quarantine:
+            quarantined_items_count += 1
+            try:
+                hist = json.loads(item["score_history_json"] or "[]")
+            except Exception:
+                hist = []
+            for h in hist:
+                if "reason" not in h:
+                    h["reason"] = ""
+            hist.append({
+                "action": "quarantined_by_migration_008",
+                "previous_points": item["points_awarded"],
+                "previous_score_status": item["score_status"],
+                "reason": f"Historical assessment item score invalid under current policy: {quarantine_reason}",
+                "recorded_at": now,
+            })
+            con.execute(
+                """
+                UPDATE assessment_items SET
+                    points_awarded = NULL,
+                    score_status = 'pending_review',
+                    score_history_json = ?
+                WHERE id = ?
+                """,
+                (json.dumps(hist), item["id"]),
+            )
+            con.execute(
+                "UPDATE assessments SET status = 'open', updated_at = ? WHERE id = ?",
+                (now, item["assessment_id"]),
+            )
+
+    # 4. Rebuild topic_state projections
+    from .repositories import EvidenceRepository
+    evidence_repo = EvidenceRepository(con)
+    all_topic_pairs = set()
+    for r in con.execute("SELECT course_id, id FROM topics").fetchall():
+        all_topic_pairs.add((r["course_id"], r["id"]))
+    for r in con.execute("SELECT course_id, topic_id FROM topic_state").fetchall():
+        all_topic_pairs.add((r["course_id"], r["topic_id"]))
+
+    for cid, tid in all_topic_pairs:
+        evidence_repo.recompute_topic_state(cid, tid)
+
+    return {
+        "quarantined_evidence_count": quarantined_evidence_count,
+        "quarantined_items_count": quarantined_items_count,
+        "rebuilt_topic_states_count": len(all_topic_pairs),
+    }
+
+
 def run_migrations(con: sqlite3.Connection, auto_quarantine_duplicates: bool = True) -> None:
     """Ensure schema_migrations exists and apply any pending migrations in order."""
     with atomic_transaction(con):
@@ -917,6 +1151,9 @@ def run_migrations(con: sqlite3.Connection, auto_quarantine_duplicates: bool = T
 
                 if version == 7:
                     resolve_and_quarantine_legacy_identities(con)
+
+                if version == 8:
+                    repair_historical_scores_and_rebuild_projections(con)
 
                 con.execute(
                     "INSERT INTO schema_migrations (version, applied_at, description) VALUES (?, datetime('now'), ?)",

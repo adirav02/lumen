@@ -70,17 +70,22 @@ def validate_finite_number(
     return fval
 
 
-def validate_finite_metadata(data: Any, path: str = "metadata") -> None:
-    """Recursively validate that all numeric values in metadata are finite."""
+def validate_all_finite_numbers(data: Any, path: str = "payload") -> None:
+    """Recursively validate that all numeric values in a data structure are finite."""
     if isinstance(data, dict):
         for k, v in data.items():
-            validate_finite_metadata(v, f"{path}.{k}")
-    elif isinstance(data, list):
+            validate_all_finite_numbers(v, f"{path}.{k}")
+    elif isinstance(data, (list, tuple, set)):
         for idx, item in enumerate(data):
-            validate_finite_metadata(item, f"{path}[{idx}]")
+            validate_all_finite_numbers(item, f"{path}[{idx}]")
     elif type(data) in (int, float) and type(data) is not bool:
         if math.isnan(data) or math.isinf(data):
             raise ValidationError(f"Non-finite numeric value in {path}: {data!r}.")
+
+
+def validate_finite_metadata(data: Any, path: str = "metadata") -> None:
+    """Recursively validate that all numeric values in metadata are finite."""
+    validate_all_finite_numbers(data, path)
 
 
 

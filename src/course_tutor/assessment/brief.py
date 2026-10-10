@@ -4,6 +4,7 @@ import sqlite3
 from typing import Any, Dict, List
 
 from ..errors import CourseNotFoundError
+from ..models import compute_exercise_version_hash, is_identity_resolved
 from ..storage.repositories import (
     AttemptRepository,
     CourseRepository,
@@ -43,14 +44,35 @@ def get_course_brief(
     open_attempt_info = None
     if open_attempt:
         ex_ver = exercise_repo.get_exercise_version(open_attempt.exercise_version_id)
-        open_attempt_info = {
-            "attempt_id": open_attempt.id,
-            "exercise_version_id": open_attempt.exercise_version_id,
-            "status": open_attempt.status,
-            "revision": open_attempt.current_revision,
-            "started_at": open_attempt.started_at,
-            "question_preview": ex_ver.question_text[:100] if ex_ver else "",
-        }
+        is_stale = False
+        if not ex_ver:
+            is_stale = True
+        else:
+            current_rev = len(ex_ver.revision_history) + 1
+            current_hash = compute_exercise_version_hash(
+                ex_ver.question_text,
+                ex_ver.reference_solution,
+                ex_ver.rubric,
+                ex_ver.subparts,
+            )
+            if (
+                not is_identity_resolved(open_attempt.exercise_revision, open_attempt.exercise_content_hash)
+                or open_attempt.exercise_revision != current_rev
+                or open_attempt.exercise_content_hash != current_hash
+            ):
+                is_stale = True
+
+        if is_stale:
+            open_attempt = None
+        else:
+            open_attempt_info = {
+                "attempt_id": open_attempt.id,
+                "exercise_version_id": open_attempt.exercise_version_id,
+                "status": open_attempt.status,
+                "revision": open_attempt.current_revision,
+                "started_at": open_attempt.started_at,
+                "question_preview": ex_ver.question_text[:100] if ex_ver else "",
+            }
 
     # 2. Source materials overview & extraction quality
     sources = source_repo.list_sources(course_id)

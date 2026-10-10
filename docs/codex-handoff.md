@@ -2,7 +2,7 @@
 
 **Date**: 2026-10-10  
 **Repository**: `lumen`  
-**Git Base**: Sixth-round correctness and reliability pass (underlying invariants) following baseline commit `565d9dca1cac7899a003b3ffce96657536a25d90`  
+**Git Base**: Seventh-round correctness and reliability pass (provenance chain eligibility & scoring invariants) following baseline commit `2eb388406c2087e588dca6a8d96fa6640a3c99ee`  
 **Author / Implementer**: Antigravity Assistant  
 **Target Recipient**: OpenAI Codex (and continuing engineering agents)
 
@@ -10,7 +10,38 @@
 
 ## 1. Executive Summary & Verified Defect Resolutions
 
-In response to Codex's independent review of baseline commit `565d9dca1cac7899a003b3ffce96657536a25d90`, all 6 confirmed underlying invariant defects have been repaired, audited, and verified across 93 automated tests (including 6 dedicated regression tests in `tests/test_underlying_invariants_repairs.py`), the CLI capability inspector, and the synthetic probability demo. All 93 automated tests pass on Python 3.10–3.14.
+In response to independent reproductions against baseline commit `2eb388406c2087e588dca6a8d96fa6640a3c99ee`, all 6 confirmed failures across public APIs and historical schema workspaces have been repaired, audited, and verified across 99 automated tests (including 6 dedicated tests in `tests/test_provenance_and_scoring_invariants.py`), the CLI capability inspector, and the synthetic probability demo. All 99 automated tests pass on Python 3.10–3.14.
+
+### Seventh-Round Verified Defect Repairs Implemented (M10)
+
+1. **Defect 1: Full Provenance Chain Eligibility Across Learning, Diagnostic, and Reporting**:
+   - `learning/policy.py`: Added `check_evidence_eligibility_chain(con, evidence)` verifying the complete provenance chain: active evidence status, educational identity resolution (non-null revision and content hash), agreement with current exercise version, attempt existence, learner ownership match, attempt identity match, and non-empty work submission event.
+   - Applied across `is_evidence_eligible_for_performance`, `record_assessment_item_score`, `get_progress`, `recompute_topic_state`, and `get_course_brief`.
+   - Obsolete, unowned, or improperly linked evidence cannot support confirmed scores or active topic coverage.
+
+2. **Defect 2: Historical Score Revalidation & Quarantine via Migration 008**:
+   - `storage/migrations.py`: Added Migration 008 (`repair_historical_scores_and_rebuild_projections`). Pre-migration backup tables `backup_v7_assessment_items`, `backup_v7_assessments`, `backup_v7_evidence`, `backup_v7_topic_state`, and `backup_v7_attempt_events` capture state byte-for-byte before mutations.
+   - Quarantines invalid active evidence to `pending_review`.
+   - Revalidates all historical scored items against current scoring policy: subpart completeness, presence of evaluated evidence, score/evidence alignment (rejects full credit for missing subparts, rejects zero score for all-positive evidence).
+   - Quarantines invalid scores to `score_status="pending_review"`, sets `points_awarded=NULL`, appends audit history entry with actionable reason, and reopens affected assessments to `status="open"`.
+
+3. **Defect 3: In-Transaction Topic State Projection Rebuilding**:
+   - `storage/migrations.py`: Inside the Migration 008 transaction, rebuilds all affected `topic_state` projections using the shared eligibility policy before committing.
+   - Guarantees that diagnostic coverage, course coverage, and course briefs immediately agree after upgrade without requiring subsequent mutations.
+
+4. **Defect 4: Scoring & Partial-Scoring Integrity Guardrails**:
+   - `assessment/diagnostic.py` & `api.py`: Enforced strict `bool` for `allow_partial` (`isinstance(allow_partial, bool)`), rejecting truthy or string inputs like `"false"`.
+   - Prevented awarding full credit (`points_awarded >= max_points`) when required subparts are missing even when `allow_partial=True`.
+   - Enforced consistent zero-score rule: confirmed zero scores strictly require evaluated incorrect work (`"incorrect"`), rejecting zero scores when all evaluated evidence is positive (`"mastered"`, `"proficient"`, `"assisted_success"`, `"developing"`).
+
+5. **Defect 5: Educational Identity Verification in Attempt Resumption and Course Briefs**:
+   - `learning/service.py`: Enforced educational identity resolution in `resume_attempt`. Resuming attempts with outdated or unresolved revision/hash raises `ValidationError`.
+   - `assessment/brief.py`: Added educational identity validation in `get_course_brief`. Excludes stale or unresolvable attempts from open attempt info and excludes `resume_attempt` from `recommended_next_actions`.
+
+6. **Defect 6: Pre-Transaction and Pre-Commit Finite JSON Validation**:
+   - `models.py`: Implemented `validate_all_finite_numbers` recursively rejecting NaN, Inf, exponent overflow (e.g. `1e999`), and booleans where numbers are expected.
+   - `cli.py`: Integrated `validate_all_finite_numbers` into `parse_json_payload` and caught validation errors in `main()` with exit code 1.
+   - `api.py`: Validated input parameters before opening database transactions in `_execute_idempotent`; tested response serialization (`json.dumps(result, allow_nan=False)`) inside the atomic transaction before writing operation receipts and committing.
 
 ### Sixth-Round Verified Invariant Repairs Implemented
 
@@ -134,9 +165,9 @@ python3 -m venv .venv
 .venv/bin/lumen capabilities
 # Output: {"status": "success", "data": {"contract_version": "1.0.0", "runtime": {"fts5_supported": true}, ...}}
 
-# 3. Full automated test suite (93/93 passed)
+# 3. Full automated test suite (99/99 passed)
 .venv/bin/pytest -v
-# Output: 93 passed in 3.18s
+# Output: 99 passed in 3.14s
 
 # 4. Standalone synthetic probability course demonstration
 .venv/bin/python demo.py
@@ -151,7 +182,14 @@ python3 -m venv .venv
 
 ## 3. Test Suite Breakdown
 
-All 93 automated test cases pass cleanly:
+All 99 automated test cases pass cleanly:
+- `tests/test_provenance_and_scoring_invariants.py` (6 tests):
+  - Defect 1: Full provenance chain eligibility (evidence status, educational identity resolution, content hash/revision match, attempt existence, learner ownership, and non-empty submission event). Ineligible evidence excluded from item classification, coverage, and course briefs.
+  - Defect 2: Historical score revalidation via Migration 008 against complete current policy (subpart completeness, evaluated evidence, score/evidence alignment). Invalid scores quarantined to `pending_review` with audit history, backups created (`backup_v7_*`), and affected assessments reopened.
+  - Defect 3: Affected `topic_state` projections rebuilt inside the migration transaction using the shared eligibility policy so coverage and briefs immediately agree after upgrade.
+  - Defect 4: Scoring and partial-scoring bypass prevention: strict boolean `allow_partial` enforced; no full credit when required subparts missing; consistent zero-score rule enforced (requires evaluated incorrect work, rejects zero when all evidence positive).
+  - Defect 5: Educational identity verification in `resume_attempt` and `course_brief` (omits stale attempts from recommendations, rejects resumption of outdated attempts).
+  - Defect 6: Finite JSON validation before commit: recursive rejection of NaN, Inf, exponent overflow before mutations or write transactions; response tested with `allow_nan=False` in atomic transaction before committing receipts.
 - `tests/test_underlying_invariants_repairs.py` (6 tests):
   - Defect 1: Migration 007 legacy identity resolution on unedited questions, quarantine on modified questions (`backup_v6_*`, `resolve_and_quarantine_legacy_identities`), and strict `commit_evidence` rejection of unresolved or mismatched identity.
   - Defect 2: Corrections on obsolete evidence stay `pending_review` with historical rationale; recomputed topic states, course brief, and progress reporting exclude obsolete/unresolved evidence.

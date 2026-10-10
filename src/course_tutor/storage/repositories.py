@@ -42,6 +42,7 @@ from ..models import (
     validate_finite_number,
     validate_finite_metadata,
 )
+from ..learning.policy import check_evidence_eligibility_chain
 from .db import atomic_transaction
 
 
@@ -1614,7 +1615,9 @@ class EvidenceRepository:
 
             ex_info = ex_ver_cache[e.exercise_version_id]
             if ex_info and e.exercise_revision == ex_info[0] and e.exercise_content_hash == ex_info[1]:
-                eligible_active_evs.append(e)
+                ok, _ = check_evidence_eligibility_chain(self.con, e, ex_info[0], ex_info[1])
+                if ok:
+                    eligible_active_evs.append(e)
 
         ind_success = sum(1 for e in eligible_active_evs if e.demonstrated_level == "independent_mastery")
         ass_success = sum(1 for e in eligible_active_evs if e.demonstrated_level == "assisted_success")
