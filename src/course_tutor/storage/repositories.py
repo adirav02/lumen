@@ -822,19 +822,115 @@ class ExerciseRepository:
         return [Exercise(**dict(r)) for r in rows]
 
     def validate_exercise_version(
-        self, version_id: str, reviewer: str, status: str = "validated", notes: str = ""
+        self,
+        version_id: str,
+        reviewer: str = "host_agent",
+        checks: Optional[Union[Dict[str, Any], List[str]]] = None,
+        notes: str = "",
+        status: str = "validated",
+        reference_solution: Optional[str] = None,
+        rubric: Optional[Dict[str, Any]] = None,
     ) -> ExerciseVersion:
         ex_ver = self.get_exercise_version(version_id)
         if not ex_ver:
             raise ValidationError(f"Exercise version '{version_id}' not found.")
-        combined_notes = f"Validated by {reviewer}: {notes}" if notes else f"Validated by {reviewer}"
+
+        if reference_solution is not None:
+            self.con.execute(
+                "UPDATE exercise_versions SET reference_solution = ? WHERE id = ?",
+                (reference_solution, version_id),
+            )
+            ex_ver.reference_solution = reference_solution
+
+        if rubric is not None:
+            rubric_json = json.dumps(rubric)
+            self.con.execute(
+                "UPDATE exercise_versions SET rubric_json = ? WHERE id = ?",
+                (rubric_json, version_id),
+            )
+            ex_ver.rubric = rubric
+
+        if isinstance(checks, list):
+            checks = {c: True for c in checks}
+
+        if status == "validated":
+            if not ex_ver.reference_solution or not ex_ver.reference_solution.strip():
+                raise ValidationError(
+                    f"Cannot validate exercise version '{version_id}': missing reference or verified solution."
+                )
+            if not ex_ver.rubric or not isinstance(ex_ver.rubric, dict) or len(ex_ver.rubric) == 0:
+                raise ValidationError(
+                    f"Cannot validate exercise version '{version_id}': missing versioned rubric."
+                )
+            if not checks or not isinstance(checks, dict) or len(checks) == 0:
+                raise ValidationError(
+                    f"Cannot validate exercise version '{version_id}': missing recorded verification checks."
+                )
+
+        provenance = {
+            "reviewer": reviewer,
+            "checks": checks or {},
+            "notes": notes,
+            "validated_at": utc_now_iso(),
+        }
+        provenance_json = json.dumps(provenance)
+
         self.con.execute(
             "UPDATE exercise_versions SET validation_state = ?, validation_notes = ? WHERE id = ?",
-            (status, combined_notes, version_id),
+            (status, provenance_json, version_id),
         )
         ex_ver.validation_state = status
-        ex_ver.validation_notes = combined_notes
+        ex_ver.validation_notes = provenance_json
         return ex_ver
+
+    def update_exercise_version(
+        self,
+        version_id: str,
+        question_text: Optional[str] = None,
+        reference_solution: Optional[str] = None,
+        rubric: Optional[Dict[str, Any]] = None,
+    ) -> ExerciseVersion:
+        ex_ver = self.get_exercise_version(version_id)
+        if not ex_ver:
+            raise ValidationError(f"Exercise version '{version_id}' not found.")
+
+        updates = []
+        params = []
+        content_changed = False
+
+        if question_text is not None and question_text != ex_ver.question_text:
+            updates.append("question_text = ?")
+            params.append(question_text)
+            content_changed = True
+        if reference_solution is not None and reference_solution != ex_ver.reference_solution:
+            updates.append("reference_solution = ?")
+            params.append(reference_solution)
+            content_changed = True
+        if rubric is not None and rubric != ex_ver.rubric:
+            updates.append("rubric_json = ?")
+            params.append(json.dumps(rubric))
+            content_changed = True
+
+        if content_changed:
+            updates.append("validation_state = 'pending_review'")
+            updates.append("validation_notes = 'Invalidated due to question or rubric changes; requires re-verification'")
+            params.append(version_id)
+            sql = f"UPDATE exercise_versions SET {', '.join(updates)} WHERE id = ?"
+            self.con.execute(sql, params)
+
+            self.con.execute(
+                "UPDATE evidence SET status = 'pending_review', correction_reason = 'Invalidated due to exercise question/rubric change', updated_at = ? WHERE exercise_version_id = ? AND status = 'active'",
+                (utc_now_iso(), version_id),
+            )
+            self.con.execute(
+                "UPDATE assessment_items SET score_status = 'pending_review', points_awarded = NULL WHERE exercise_version_id = ?",
+                (version_id,),
+            )
+            self.con.execute(
+                "UPDATE assessments SET status = 'open' WHERE id IN (SELECT assessment_id FROM assessment_items WHERE exercise_version_id = ?)",
+                (version_id,),
+            )
+        return self.get_exercise_version(version_id)
 
 
 class AttemptRepository:
@@ -1168,6 +1264,16 @@ class AssessmentRepository:
     def __init__(self, con: sqlite3.Connection):
         self.con = con
 
+    def _row_to_item(self, row: sqlite3.Row) -> AssessmentItem:
+        d = dict(row)
+        score_history_raw = d.pop("score_history_json", None)
+        d["score_history"] = json.loads(score_history_raw) if score_history_raw else []
+        evidence_ids_raw = d.pop("evidence_ids_json", None)
+        d["evidence_ids"] = json.loads(evidence_ids_raw) if evidence_ids_raw else []
+        if "score_status" not in d:
+            d["score_status"] = "scored" if d.get("points_awarded") is not None else "unassessed"
+        return AssessmentItem(**d)
+
     def create_assessment(self, assessment: Assessment, items: List[AssessmentItem]) -> Assessment:
         self.con.execute(
             "INSERT INTO assessments (id, course_id, title, blueprint_json, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -1184,8 +1290,12 @@ class AssessmentRepository:
         for it in items:
             self.con.execute(
                 """
-                INSERT INTO assessment_items (id, assessment_id, exercise_version_id, item_order, attempt_id, weight, max_points, points_awarded, exposure_count, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO assessment_items (
+                    id, assessment_id, exercise_version_id, item_order, attempt_id,
+                    weight, max_points, points_awarded, exposure_count,
+                    score_status, score_history_json, evidence_ids_json, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     it.id,
@@ -1197,6 +1307,9 @@ class AssessmentRepository:
                     it.max_points,
                     it.points_awarded,
                     it.exposure_count,
+                    it.score_status,
+                    json.dumps(it.score_history),
+                    json.dumps(it.evidence_ids),
                     it.created_at,
                 ),
             )
@@ -1240,63 +1353,74 @@ class AssessmentRepository:
     def get_items(self, assessment_id: str) -> List[AssessmentItem]:
         rows = self.con.execute(
             """
-            SELECT id, assessment_id, exercise_version_id, item_order, attempt_id, weight, max_points, points_awarded, exposure_count, created_at
+            SELECT *
             FROM assessment_items WHERE assessment_id = ? ORDER BY item_order ASC
             """,
             (assessment_id,),
         ).fetchall()
-        return [AssessmentItem(**dict(r)) for r in rows]
+        return [self._row_to_item(r) for r in rows]
 
     def update_item_progress(
         self,
         item_id: str,
         attempt_id: Optional[str] = None,
         points_awarded: Optional[float] = None,
+        score_status: Optional[str] = None,
+        score_history: Optional[List[Dict[str, Any]]] = None,
+        evidence_ids: Optional[List[str]] = None,
     ) -> None:
-        self.con.execute(
-            "UPDATE assessment_items SET attempt_id = COALESCE(?, attempt_id), points_awarded = ? WHERE id = ?",
-            (attempt_id, points_awarded, item_id),
-        )
+        updates = ["points_awarded = ?"]
+        params: List[Any] = [points_awarded]
+
+        if attempt_id is not None:
+            updates.append("attempt_id = ?")
+            params.append(attempt_id)
+        if score_status is not None:
+            updates.append("score_status = ?")
+            params.append(score_status)
+        if score_history is not None:
+            updates.append("score_history_json = ?")
+            params.append(json.dumps(score_history))
+        if evidence_ids is not None:
+            updates.append("evidence_ids_json = ?")
+            params.append(json.dumps(evidence_ids))
+
+        params.append(item_id)
+        sql = f"UPDATE assessment_items SET {', '.join(updates)} WHERE id = ?"
+        self.con.execute(sql, params)
 
     def get_item_by_order(self, assessment_id: str, item_order: int) -> Optional[AssessmentItem]:
         row = self.con.execute(
             """
-            SELECT id, assessment_id, exercise_version_id, item_order, attempt_id, weight, max_points, points_awarded, exposure_count, created_at
+            SELECT *
             FROM assessment_items WHERE assessment_id = ? AND item_order = ?
             """,
             (assessment_id, item_order),
         ).fetchone()
         if not row:
             return None
-        return AssessmentItem(**dict(row))
+        return self._row_to_item(row)
 
     def get_item_by_attempt(self, attempt_id: str) -> Optional[AssessmentItem]:
         row = self.con.execute(
             """
-            SELECT id, assessment_id, exercise_version_id, item_order, attempt_id, weight, max_points, points_awarded, exposure_count, created_at
+            SELECT *
             FROM assessment_items WHERE attempt_id = ?
             """,
             (attempt_id,),
         ).fetchone()
         if not row:
             return None
-        return AssessmentItem(**dict(row))
+        return self._row_to_item(row)
 
     def update_item_score(
         self, assessment_id: str, item_order: int, attempt_id: str, points_awarded: float
     ) -> AssessmentItem:
-        self.con.execute(
-            """
-            UPDATE assessment_items
-            SET attempt_id = ?, points_awarded = ?
-            WHERE assessment_id = ? AND item_order = ?
-            """,
-            (attempt_id, points_awarded, assessment_id, item_order),
-        )
         item = self.get_item_by_order(assessment_id, item_order)
         if not item:
             raise ValidationError(f"Assessment item {item_order} not found in assessment '{assessment_id}'.")
-        return item
+        self.update_item_progress(item.id, attempt_id=attempt_id, points_awarded=points_awarded, score_status="scored")
+        return self.get_item_by_order(assessment_id, item_order)
 
     def update_assessment_status(self, assessment_id: str, status: str) -> None:
         self.con.execute(

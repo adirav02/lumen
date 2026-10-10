@@ -28,20 +28,13 @@ class IngestionPipeline:
         self.topic_repo = TopicRepository(con)
         self.knowledge_repo = KnowledgeRepository(con)
 
-    def ingest_file(
+    def prepare_ingestion(
         self,
         course_id: str,
         file_path: Union[str, Path],
         logical_name: Optional[str] = None,
-        role: str = "reference",
-        structured_units: Optional[List[Dict[str, Any]]] = None,
-        topic_slugs: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """Ingest a file into course: stages bytes, creates source version, extracts units.
-        
-        Extraction and file staging occur outside database transactions to avoid
-        holding SQLite transaction locks during long-running I/O or parsing operations.
-        """
+        """Stage file into quarantine copy and extract sections outside any database transactions."""
         course = self.course_repo.get_course(course_id)
         if not course:
             raise CourseNotFoundError(course_id)
@@ -53,28 +46,60 @@ class IngestionPipeline:
         orig_filename = src_path.name
         log_name = logical_name or orig_filename
 
-        # 1. Stage and store original file byte-for-byte outside DB transaction
-        stored = self.file_store.store_file(src_path, original_filename=orig_filename)
+        # 1. Stage file outside DB transaction into quarantine copy
+        staged_path, file_hash, byte_size, mime_type = self.file_store.stage_file(src_path, original_filename=orig_filename)
 
-        # 2. Extract content using format extractor outside DB transaction
-        extractor = get_extractor(src_path)
-        sections = extractor.extract(src_path)
+        try:
+            # 2. Extract content using format extractor from the immutable staged file outside DB transaction
+            extractor = get_extractor(staged_path)
+            sections = extractor.extract(staged_path)
 
-        quality_flags = {sec.quality_flag for sec in sections}
-        limitations = [sec.notes for sec in sections if sec.notes]
+            quality_flags = {sec.quality_flag for sec in sections}
+            limitations = [sec.notes for sec in sections if sec.notes]
 
-        # F01: if scanned or uncertain, mark explicit status
-        if "uncertain_scanned" in quality_flags:
-            extraction_status = "uncertain"
-            status_notes = "; ".join(limitations) or "Contains scanned pages with uncertain or missing text layer."
-        elif "empty" in quality_flags and len(sections) == 1:
-            extraction_status = "empty"
-            status_notes = "No extractable text found."
-        else:
-            extraction_status = "extracted"
-            status_notes = ""
+            if "uncertain_scanned" in quality_flags:
+                extraction_status = "uncertain"
+                status_notes = "; ".join(limitations) or "Contains scanned pages with uncertain or missing text layer."
+            elif "empty" in quality_flags and len(sections) == 1:
+                extraction_status = "empty"
+                status_notes = "No extractable text found."
+            else:
+                extraction_status = "extracted"
+                status_notes = ""
 
-        # 3. Fast atomic transaction for database metadata and unit persistence
+            return {
+                "course_id": course_id,
+                "orig_filename": orig_filename,
+                "log_name": log_name,
+                "staged_path": staged_path,
+                "file_hash": file_hash,
+                "byte_size": byte_size,
+                "mime_type": mime_type,
+                "sections": sections,
+                "extraction_status": extraction_status,
+                "status_notes": status_notes,
+                "limitations": limitations,
+            }
+        except Exception:
+            if staged_path.exists():
+                staged_path.unlink(missing_ok=True)
+            raise
+
+    def commit_prepared_ingestion(
+        self,
+        course_id: str,
+        log_name: str,
+        role: str,
+        orig_filename: str,
+        stored: Any,
+        sections: List[ExtractedSection],
+        extraction_status: str,
+        status_notes: str,
+        limitations: List[str],
+        topic_slugs: Optional[List[str]] = None,
+        structured_units: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """Commit prepared ingestion results into the database inside a fast atomic transaction."""
         with atomic_transaction(self.con):
             # Register logical source
             source = self.source_repo.get_or_create_source(course_id, log_name, role=role)
@@ -82,7 +107,6 @@ class IngestionPipeline:
             # Check for identical content already in course (F05: content identity)
             existing_ver = self.source_repo.find_version_by_hash(course_id, stored.file_hash)
             if existing_ver and existing_ver.source_id == source.id:
-                # Same source and exact same content uploaded again: return existing without reprocessing
                 return {
                     "status": "existing_content_reused",
                     "source_id": source.id,
@@ -161,10 +185,46 @@ class IngestionPipeline:
             "storage_relpath": stored.storage_relpath,
             "units_created_count": len(created_units),
             "units": [u.to_dict() for u in created_units],
+            "units_created": [u.to_dict() for u in created_units],
             "sections_extracted": len(sections),
             "extraction_status": extraction_status,
             "limitations": limitations,
         }
+
+    def ingest_file(
+        self,
+        course_id: str,
+        file_path: Union[str, Path],
+        logical_name: Optional[str] = None,
+        role: str = "reference",
+        structured_units: Optional[List[Dict[str, Any]]] = None,
+        topic_slugs: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Ingest a file into course: stages bytes, extracts units outside DB, then commits atomically."""
+        prep = self.prepare_ingestion(course_id, file_path, logical_name)
+        staged_path = prep["staged_path"]
+        try:
+            stored = self.file_store.publish_staged(
+                staged_path=staged_path,
+                file_hash=prep["file_hash"],
+                original_filename=prep["orig_filename"],
+            )
+            return self.commit_prepared_ingestion(
+                course_id=course_id,
+                log_name=prep["log_name"],
+                role=role,
+                orig_filename=prep["orig_filename"],
+                stored=stored,
+                sections=prep["sections"],
+                extraction_status=prep["extraction_status"],
+                status_notes=prep["status_notes"],
+                limitations=prep["limitations"],
+                topic_slugs=topic_slugs,
+                structured_units=structured_units,
+            )
+        finally:
+            if staged_path.exists():
+                staged_path.unlink(missing_ok=True)
 
     def enrich_source_version(
         self,

@@ -82,6 +82,7 @@ class SearchService:
     def _format_hit(self, unit: KnowledgeUnit, score: float, match_type: str) -> Dict[str, Any]:
         provenance_list = self.knowledge_repo.get_provenance(unit.id)
         prov_summaries = []
+        uncertainty_notes = []
 
         for p in provenance_list:
             s_ver = self.source_repo.get_source_version(p.source_version_id)
@@ -96,6 +97,8 @@ class SearchService:
 
             loc_str = f" ({', '.join(loc)})" if loc else ""
             prov_summaries.append(f"{src_name}{loc_str}")
+            if s_ver and s_ver.extraction_status != "extracted":
+                uncertainty_notes.append(f"{s_ver.extraction_status}: {s_ver.extraction_notes}")
 
         topic_ids = self.knowledge_repo.get_unit_topics(unit.id)
         topic_names = []
@@ -108,11 +111,14 @@ class SearchService:
             "unit_id": unit.id,
             "kind": unit.kind,
             "title": unit.title,
+            "status": unit.status,
+            "is_pending_review": unit.status == "pending_review",
             "summary": unit.summary,
             "assumptions_count": len(unit.assumptions),
             "has_formulas_or_symbols": len(unit.symbol_definitions) > 0,
             "score": score,
             "match_type": match_type,
             "provenance": prov_summaries,
+            "uncertainty_notes": uncertainty_notes,
             "topics": topic_names,
         }

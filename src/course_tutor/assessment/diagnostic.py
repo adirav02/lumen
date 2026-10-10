@@ -1,13 +1,15 @@
 """Diagnostic assessments with blueprints, exposure tracking, and transparent reporting."""
 
+import math
 import sqlite3
 from typing import Any, Dict, List, Optional
 import uuid
 
-from ..errors import CourseNotFoundError, UnvalidatedQuestionError, ValidationError
+from ..errors import CourseNotFoundError, CrossCourseViolationError, UnvalidatedQuestionError, ValidationError
 from ..models import Assessment, AssessmentItem, ExerciseVersion, utc_now_iso
 from ..storage.repositories import (
     AssessmentRepository,
+    AttemptRepository,
     CourseRepository,
     EvidenceRepository,
     ExerciseRepository,
@@ -21,6 +23,7 @@ class DiagnosticService:
         self.con = con
         self.course_repo = CourseRepository(con)
         self.assessment_repo = AssessmentRepository(con)
+        self.attempt_repo = AttemptRepository(con)
         self.exercise_repo = ExerciseRepository(con)
         self.evidence_repo = EvidenceRepository(con)
         self.topic_repo = TopicRepository(con)
@@ -125,7 +128,7 @@ class DiagnosticService:
         points_awarded: float,
         attempt_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Record rubric score for an assessment item without penalizing unattempted items as failures."""
+        """Record rubric score for an assessment item requiring validated observed work and supporting evidence."""
         assessment = self.assessment_repo.get_assessment(assessment_id)
         if not assessment:
             raise ValidationError(f"Assessment '{assessment_id}' not found.")
@@ -134,29 +137,100 @@ class DiagnosticService:
         if not item:
             raise ValidationError(f"Item {item_order} not found in assessment '{assessment_id}'.")
 
+        # Reject non-finite numeric values (NaN, Inf)
+        if not isinstance(points_awarded, (int, float)) or not math.isfinite(points_awarded):
+            raise ValidationError(f"Points awarded must be a finite numeric value, got {points_awarded!r}.")
+
         if points_awarded < 0 or points_awarded > item.max_points:
             raise ValidationError(
                 f"Points awarded {points_awarded} out of valid range [0, {item.max_points}]."
             )
 
         linked_attempt_id = attempt_id or item.attempt_id
+        if not linked_attempt_id:
+            raise ValidationError(
+                f"Cannot award score for item {item_order} without an active, linked attempt."
+            )
+
+        attempt = self.attempt_repo.get_attempt(linked_attempt_id)
+        if not attempt:
+            raise ValidationError(f"Attempt '{linked_attempt_id}' not found.")
+
+        # Validate relationships: course, exercise version
+        if attempt.course_id != assessment.course_id:
+            raise CrossCourseViolationError("Attempt", linked_attempt_id, assessment.course_id, attempt.course_id)
+
+        if attempt.exercise_version_id != item.exercise_version_id:
+            raise ValidationError(
+                f"Attempt '{linked_attempt_id}' exercise version '{attempt.exercise_version_id}' "
+                f"does not match assessment item {item_order} version '{item.exercise_version_id}'."
+            )
+
+        # Require a committed work submission with observed content
+        events = self.attempt_repo.list_events(linked_attempt_id)
+        work_submissions = [e for e in events if e.event_type == "work_submission" and e.content.strip()]
+        if not work_submissions:
+            raise ValidationError(
+                f"Attempt '{linked_attempt_id}' has no committed work submission with observed content. "
+                "Cannot award score without submitted learner work."
+            )
+
+        # Require an applicable, checked active rubric evaluation
+        active_evidence = self.evidence_repo.list_evidence(
+            course_id=assessment.course_id,
+            attempt_id=linked_attempt_id,
+            status="active",
+        )
+        if not active_evidence:
+            raise ValidationError(
+                f"Attempt '{linked_attempt_id}' has no active evaluated evidence. "
+                "Cannot award score without an applicable, checked rubric evaluation."
+            )
+
+        submission_event_ids = {ws.id for ws in work_submissions}
+        valid_evidence = [e for e in active_evidence if e.event_id in submission_event_ids]
+        if not valid_evidence:
+            raise ValidationError(
+                f"Active evidence in attempt '{linked_attempt_id}' is not linked to any committed work submission."
+            )
+
+        # Build audit history entry
+        ev_ids = [e.id for e in valid_evidence]
+        history_entry = {
+            "points_awarded": float(points_awarded),
+            "previous_points": item.points_awarded,
+            "attempt_id": linked_attempt_id,
+            "evidence_ids": ev_ids,
+            "recorded_at": utc_now_iso(),
+            "action": "score_recorded",
+        }
+        score_history = list(item.score_history) + [history_entry]
+
         self.assessment_repo.update_item_progress(
             item.id,
             attempt_id=linked_attempt_id,
-            points_awarded=points_awarded,
+            points_awarded=float(points_awarded),
+            score_status="scored",
+            score_history=score_history,
+            evidence_ids=ev_ids,
         )
 
-        # Check if all items are completed
+        # Update assessment completion status: only completed when ALL items are scored
         all_items = self.assessment_repo.get_items(assessment_id)
-        if all(it.points_awarded is not None or it.id == item.id for it in all_items):
+        if all((it.points_awarded is not None and it.score_status == "scored") or (it.id == item.id and points_awarded is not None) for it in all_items):
             self.assessment_repo.update_assessment_status(assessment_id, "completed")
+        else:
+            self.assessment_repo.update_assessment_status(assessment_id, "open")
 
         return {
             "assessment_id": assessment_id,
             "item_order": item_order,
-            "points_awarded": points_awarded,
+            "points_awarded": float(points_awarded),
             "max_points": item.max_points,
+            "score_status": "scored",
+            "score_history": score_history,
             "attempt_id": linked_attempt_id,
+            "evidence_ids": ev_ids,
         }
 
     def _get_family_exposure(self, course_id: str, exercise_family: str) -> int:
@@ -174,9 +248,9 @@ class DiagnosticService:
         return int(row["cnt"]) if row else 0
 
     def get_progress(self, assessment_id: str) -> Dict[str, Any]:
-        """Compute transparent progress report distinguishing observed score, coverage, and assistance.
+        """Compute transparent progress report distinguishing observed score, coverage, assistance, and pending work.
         
-        Reports transparent denominators without penalizing unattempted items as failures.
+        Preserves unanswered and unresolved items as unassessed without penalizing unattempted items as failures.
         """
         assessment = self.assessment_repo.get_assessment(assessment_id)
         if not assessment:
@@ -184,18 +258,64 @@ class DiagnosticService:
 
         items = self.assessment_repo.get_items(assessment_id)
         total_items = len(items)
-        items_scored = sum(1 for it in items if it.points_awarded is not None)
-        items_attempted = sum(1 for it in items if it.points_awarded is not None or it.attempt_id is not None)
-        items_unattempted = total_items - items_attempted
 
+        items_scored = []
+        items_pending = []
+        items_unassessed = []
+
+        total_awarded_points = 0.0
+        attempted_possible_points = 0.0
         total_possible_points = sum(it.max_points for it in items)
-        attempted_possible_points = sum(it.max_points for it in items if it.points_awarded is not None)
-        total_awarded_points = sum(it.points_awarded for it in items if it.points_awarded is not None)
 
+        items_summary = []
+        for it in items:
+            ex_ver = self.exercise_repo.get_exercise_version(it.exercise_version_id)
+            is_scored = (it.score_status == "scored" and it.points_awarded is not None)
+            item_detail = {
+                "item_order": it.item_order,
+                "exercise_version_id": it.exercise_version_id,
+                "attempt_id": it.attempt_id,
+                "question_preview": ex_ver.question_text[:80] if ex_ver else "",
+                "max_points": it.max_points,
+                "points_awarded": it.points_awarded,
+                "score_status": it.score_status,
+                "score_history": it.score_history,
+                "evidence_ids": it.evidence_ids,
+                "completed": is_scored,
+                "prior_exposure_count": it.exposure_count,
+            }
+            items_summary.append(item_detail)
+
+            if is_scored:
+                items_scored.append(item_detail)
+                total_awarded_points += float(it.points_awarded)
+                attempted_possible_points += it.max_points
+            elif it.score_status == "pending_review":
+                items_pending.append(item_detail)
+            else:
+                items_unassessed.append(item_detail)
+
+        # Assistance summary across attempts
+        assistance_summary = {
+            "independent_items_count": 0,
+            "assisted_items_count": 0,
+            "solution_revealed_items_count": 0,
+        }
+        for it in items:
+            if it.attempt_id:
+                events = self.attempt_repo.list_events(it.attempt_id)
+                has_sol = any(e.event_type == "solution_revealed" for e in events)
+                has_hint = any(e.event_type == "hint_given" for e in events)
+                if has_sol:
+                    assistance_summary["solution_revealed_items_count"] += 1
+                elif has_hint:
+                    assistance_summary["assisted_items_count"] += 1
+                elif any(e.event_type == "work_submission" for e in events):
+                    assistance_summary["independent_items_count"] += 1
+
+        # Blueprint & Topic coverage
         blueprint = assessment.blueprint
         required_topic_ids = blueprint.get("topic_ids", [])
-
-        # Topic coverage analysis
         course_topics = {t.id: t for t in self.topic_repo.list_topics(assessment.course_id)}
         topic_coverage: Dict[str, Any] = {}
 
@@ -224,47 +344,50 @@ class DiagnosticService:
                     "note": "Untested / missing evidence",
                 }
 
-        # Items details
-        items_summary = []
-        for it in items:
-            ex_ver = self.exercise_repo.get_exercise_version(it.exercise_version_id)
-            items_summary.append({
-                "item_order": it.item_order,
-                "exercise_version_id": it.exercise_version_id,
-                "attempt_id": it.attempt_id,
-                "question_preview": ex_ver.question_text[:80] if ex_ver else "",
-                "max_points": it.max_points,
-                "points_awarded": it.points_awarded,
-                "completed": it.points_awarded is not None,
-                "prior_exposure_count": it.exposure_count,
-            })
-
-        # Observed percentage is computed strictly on attempted/scored items to avoid treating unattempted items as failures
         observed_percentage = (
             round((total_awarded_points / attempted_possible_points * 100), 1)
             if attempted_possible_points > 0
             else 0.0
         )
         completion_percentage = (
-            round((items_scored / total_items * 100), 1)
+            round((len(items_scored) / total_items * 100), 1)
             if total_items > 0
             else 0.0
         )
+
+        observed_scores = {
+            "total_awarded_points": total_awarded_points,
+            "attempted_possible_points": attempted_possible_points,
+            "total_possible_points": total_possible_points,
+            "observed_percentage": observed_percentage,
+            "completed_items_count": len(items_scored),
+        }
+
+        pending_work = {
+            "pending_review_items": items_pending,
+            "unassessed_items": items_unassessed,
+            "pending_count": len(items_pending),
+            "unassessed_count": len(items_unassessed),
+        }
 
         return {
             "assessment_id": assessment_id,
             "title": assessment.title,
             "status": assessment.status,
             "total_items": total_items,
-            "completed_items": items_scored,
-            "items_attempted": items_attempted,
-            "items_unattempted": items_unattempted,
+            "completed_items": len(items_scored),
+            "items_attempted": len(items_scored) + len(items_pending),
+            "items_unattempted": len(items_unassessed),
             "total_possible_points": total_possible_points,
             "attempted_possible_points": attempted_possible_points,
             "total_awarded_points": total_awarded_points,
             "observed_percentage": observed_percentage,
             "completion_percentage": completion_percentage,
+            "observed_scores": observed_scores,
+            "coverage": topic_coverage,
             "topic_coverage": topic_coverage,
+            "assistance": assistance_summary,
+            "pending_work": pending_work,
             "items": items_summary,
             "caveats": [
                 "Score reflects observed rubric points on attempted items; not an exam pass probability.",

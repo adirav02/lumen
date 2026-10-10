@@ -286,9 +286,16 @@ CREATE TABLE IF NOT EXISTS source_sections (
 CREATE INDEX IF NOT EXISTS idx_source_sections_ver ON source_sections(source_version_id, section_index);
 """
 
+MIGRATION_V3_SQL = """
+ALTER TABLE assessment_items ADD COLUMN score_status TEXT NOT NULL DEFAULT 'unassessed';
+ALTER TABLE assessment_items ADD COLUMN score_history_json TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE assessment_items ADD COLUMN evidence_ids_json TEXT NOT NULL DEFAULT '[]';
+"""
+
 MIGRATIONS: List[Tuple[int, str, str]] = [
     (1, "Initial schema for Lumen core with FTS5", MIGRATION_V1_SQL),
     (2, "Persist complete extracted sections and source locators", MIGRATION_V2_SQL),
+    (3, "Track assessment item score status, audit history, and supporting evidence", MIGRATION_V3_SQL),
 ]
 
 

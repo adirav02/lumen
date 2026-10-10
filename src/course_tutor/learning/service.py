@@ -19,6 +19,7 @@ from ..models import (
 )
 from ..storage.db import atomic_transaction
 from ..storage.repositories import (
+    AssessmentRepository,
     AttemptRepository,
     EvidenceRepository,
     ExerciseRepository,
@@ -30,6 +31,7 @@ from .policy import determine_demonstrated_level
 class LearningService:
     def __init__(self, con: sqlite3.Connection):
         self.con = con
+        self.assessment_repo = AssessmentRepository(con)
         self.attempt_repo = AttemptRepository(con)
         self.exercise_repo = ExerciseRepository(con)
         self.evidence_repo = EvidenceRepository(con)
@@ -85,6 +87,9 @@ class LearningService:
             if attempt.current_revision != expected_revision:
                 raise StaleRevisionError("Attempt", attempt_id, expected_revision, attempt.current_revision)
 
+            if event_type == "work_submission" and (not content or not content.strip()):
+                raise ValidationError("work_submission event requires non-empty content.")
+
             existing_events = self.attempt_repo.list_events(attempt_id)
             next_idx = len(existing_events) + 1
 
@@ -127,6 +132,7 @@ class LearningService:
         attempt_id: str,
         evaluations: List[Dict[str, Any]],
         complete_attempt: bool = False,
+        submission_event_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Commit evidence for observed subparts and recompute topic projections deterministically.
 
@@ -160,15 +166,32 @@ class LearningService:
 
                 # Tie evaluation to a specific committed submission event
                 submission_event = None
-                if "submission_event_id" in ev_data and ev_data["submission_event_id"]:
-                    submission_event = next((e for e in all_events if e.id == ev_data["submission_event_id"]), None)
+                sub_id = ev_data.get("submission_event_id") or submission_event_id
+                if sub_id:
+                    submission_event = next((e for e in all_events if e.id == sub_id), None)
                     if not submission_event:
-                        raise ValidationError(f"Specified submission event '{ev_data['submission_event_id']}' not found in attempt.")
+                        raise ValidationError(f"Specified submission event '{sub_id}' not found in attempt.")
+                    if submission_event.event_type != "work_submission":
+                        raise ValidationError(
+                            f"Event '{sub_id}' has type '{submission_event.event_type}', expected 'work_submission'."
+                        )
+                    if submission_event.attempt_id != attempt_id:
+                        raise ValidationError(f"Event '{sub_id}' does not belong to attempt '{attempt_id}'.")
+                    if submission_event.course_id != attempt.course_id:
+                        raise CrossCourseViolationError("AttemptEvent", sub_id, attempt.course_id, submission_event.course_id)
+                    if not submission_event.content or not submission_event.content.strip():
+                        raise ValidationError(f"Submission event '{sub_id}' contains no observed work content.")
+                    if submission_event.subpart_key and subpart_key != "default" and submission_event.subpart_key != subpart_key:
+                        raise ValidationError(
+                            f"Submission event subpart '{submission_event.subpart_key}' does not match evaluation subpart '{subpart_key}'."
+                        )
                 else:
-                    # Find last work_submission for this subpart or globally
+                    # Find last work_submission for this subpart with observed content
                     matching_submissions = [
                         e for e in all_events
-                        if e.event_type == "work_submission" and (e.subpart_key == subpart_key or not e.subpart_key)
+                        if e.event_type == "work_submission"
+                        and (e.subpart_key == subpart_key or (not e.subpart_key and subpart_key == "default") or not e.subpart_key)
+                        and e.content.strip()
                     ]
                     if matching_submissions:
                         submission_event = matching_submissions[-1]
@@ -190,17 +213,28 @@ class LearningService:
                 # Events after submission must NOT downgrade work submitted prior to assistance.
                 subpart_assistance_events = [
                     e for e in all_events
-                    if (e.subpart_key == subpart_key or not e.subpart_key)
+                    if (e.subpart_key == subpart_key or not e.subpart_key or not submission_event.subpart_key)
                     and e.event_index <= submission_event.event_index
                 ]
 
+                requested_level = ev_data.get("demonstrated_level")
+                has_solution = any(e.event_type == "solution_revealed" for e in subpart_assistance_events)
+                has_hint = any(e.event_type == "hint_given" for e in subpart_assistance_events)
+
+                if requested_level == "independent_mastery":
+                    if has_solution:
+                        raise ValidationError("Cannot award 'independent_mastery' when solution was revealed before submission.")
+                    if has_hint:
+                        raise ValidationError("Cannot award 'independent_mastery' when hint was given before submission.")
+
                 has_arithmetic_only = (error_category == "arithmetic" and is_partial)
-                demonstrated_level = determine_demonstrated_level(
+                auto_level = determine_demonstrated_level(
                     submitted_correct=is_correct,
                     events_for_subpart=subpart_assistance_events,
                     is_partial_progress=is_partial,
                     has_arithmetic_error_only=has_arithmetic_only,
                 )
+                demonstrated_level = requested_level or auto_level
 
                 ev_rec = EvidenceRecord(
                     id=str(uuid.uuid4()),
@@ -247,6 +281,7 @@ class LearningService:
 
         Maintains full audit trail while recomputing active topic states deterministically.
         Ensures tutor corrections cannot bypass assistance history.
+        Updates linked assessment scores according to documented policy.
         """
         with atomic_transaction(self.con):
             old_ev = self.evidence_repo.get_evidence(evidence_id)
@@ -255,17 +290,28 @@ class LearningService:
 
             if replacement:
                 rep_level = replacement.get("demonstrated_level")
+                attempt_events = self.attempt_repo.list_events(old_ev.attempt_id)
+                sub_event = next((e for e in attempt_events if e.id == old_ev.event_id), None)
+                if not sub_event or sub_event.event_type != "work_submission":
+                    raise ValidationError("Underlying evidence event is not a valid committed work_submission.")
+
+                max_idx = sub_event.event_index
+                rep_subpart = replacement.get("subpart_key", old_ev.subpart_key)
+
+                # Prevent evading assistance checks by changing subpart metadata
+                prior_events = [
+                    e for e in attempt_events
+                    if (e.subpart_key in (old_ev.subpart_key, rep_subpart, sub_event.subpart_key) or not e.subpart_key)
+                    and e.event_index <= max_idx
+                ]
+                has_solution = any(e.event_type == "solution_revealed" for e in prior_events)
+                has_hint = any(e.event_type == "hint_given" for e in prior_events)
+
                 if rep_level == "independent_mastery":
-                    attempt_events = self.attempt_repo.list_events(old_ev.attempt_id)
-                    sub_event = next((e for e in attempt_events if e.id == old_ev.event_id), None)
-                    max_idx = sub_event.event_index if sub_event else float("inf")
-                    prior_events = [
-                        e for e in attempt_events
-                        if (e.subpart_key == old_ev.subpart_key or not e.subpart_key) and e.event_index <= max_idx
-                    ]
-                    has_solution = any(e.event_type == "solution_revealed" for e in prior_events)
                     if has_solution:
                         raise ValidationError("Cannot assign 'independent_mastery' via correction when solution was revealed before submission.")
+                    if has_hint:
+                        raise ValidationError("Cannot assign 'independent_mastery' via correction when hint was given before submission.")
 
                 new_rec = EvidenceRecord(
                     id=str(uuid.uuid4()),
@@ -275,7 +321,7 @@ class LearningService:
                     exercise_version_id=old_ev.exercise_version_id,
                     topic_id=replacement.get("topic_id", old_ev.topic_id),
                     skill_id=replacement.get("skill_id", old_ev.skill_id),
-                    subpart_key=replacement.get("subpart_key", old_ev.subpart_key),
+                    subpart_key=rep_subpart,
                     demonstrated_level=replacement["demonstrated_level"],
                     error_category=replacement.get("error_category"),
                     rationale=replacement.get("rationale", f"Correction: {correction_reason}"),
@@ -294,6 +340,29 @@ class LearningService:
             for tid in affected_topics:
                 state = self.evidence_repo.recompute_topic_state(old_ev.course_id, tid)
                 recomputed_states[tid] = state.to_dict()
+
+            # Follow corrections and retractions into linked assessment items (Defect 2)
+            item = self.assessment_repo.get_item_by_attempt(old_ev.attempt_id)
+            if item and item.points_awarded is not None:
+                history_entry = {
+                    "points_awarded": None,
+                    "previous_points": item.points_awarded,
+                    "attempt_id": old_ev.attempt_id,
+                    "evidence_id": evidence_id,
+                    "action": "retracted_to_pending_review" if not replacement else "superseded_to_pending_review",
+                    "reason": correction_reason,
+                    "recorded_at": utc_now_iso(),
+                }
+                score_history = list(item.score_history) + [history_entry]
+                self.assessment_repo.update_item_progress(
+                    item.id,
+                    attempt_id=item.attempt_id,
+                    points_awarded=None,
+                    score_status="pending_review",
+                    score_history=score_history,
+                    evidence_ids=[],
+                )
+                self.assessment_repo.update_assessment_status(item.assessment_id, "open")
 
             return {
                 "status": "success",

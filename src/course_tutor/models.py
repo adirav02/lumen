@@ -299,6 +299,9 @@ class AssessmentItem:
     max_points: float = 10.0
     points_awarded: Optional[float] = None
     exposure_count: int = 0
+    score_status: str = "unassessed"  # 'unassessed', 'scored', 'pending_review'
+    score_history: List[Dict[str, Any]] = field(default_factory=list)
+    evidence_ids: List[str] = field(default_factory=list)
     created_at: str = field(default_factory=utc_now_iso)
 
     def to_dict(self) -> Dict[str, Any]:

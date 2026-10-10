@@ -56,12 +56,15 @@
 
 ---
 
-## 3. Measured Efficiency & Token Comparison
+## 3. Synthetic Task Benchmark: Heuristic Context Payload Reduction
+
+> [!NOTE]
+> This benchmark measures context payload reduction in raw transferred bytes and character-based heuristic token estimates (~4 chars/token) on synthetic course tasks. It does not measure provider-billed total monetary costs or real model tokenizer token savings.
 
 ### A. Single Operation Payload Comparison
 Measured against synthetic probability course materials (`lecture_bayes.txt` + `slides_random_variables.txt`):
 
-| Context / Operation | Measured Payload (Bytes) | Estimated Tokens (~4 chars/token) | Savings vs Full Injection |
+| Context / Operation | Measured Payload (Bytes) | Estimated Tokens (~4 chars/token) | Payload Reduction vs Full Injection |
 |---|---|---|---|
 | **Naive Baseline (All Sources)** | 2,807 B | ~701 tokens | 0% (baseline) |
 | **Lumen Session Startup (`course_brief`)** | 931 B | ~232 tokens | **66.8% reduction** |
@@ -71,7 +74,7 @@ Measured against synthetic probability course materials (`lecture_bayes.txt` + `
 ### B. Complete Multi-Turn Task Benchmark (6 Turns)
 Simulates: (1) Session Brief -> (2) Concept Search -> (3) Dependency Expansion & Read -> (4) Start Attempt + Receipt -> (5) Submission Event -> (6) Evidence Commit + Receipt:
 
-| Metric | Naive Full-Materials Baseline | Lumen Structured Operations | Savings |
+| Metric | Naive Full-Materials Baseline | Lumen Structured Operations | Payload Reduction |
 |---|---|---|---|
 | **Total Transferred Bytes** | 16,842 bytes | 4,815 bytes | **71.4% reduction** |
 | **Estimated Tokens (~4 chars/token)** | 4,206 tokens | 1,200 tokens | **71.5% reduction** |
@@ -85,7 +88,7 @@ Simulates: (1) Session Brief -> (2) Concept Search -> (3) Dependency Expansion &
   - Native discovery of `.agents/skills/lumen/SKILL.md` and root `AGENTS.md` verified.
 - **OpenAI Codex**:
   - Configuration verified: Root `AGENTS.md`, `.agents/skills/lumen/SKILL.md`, `.codex/config.toml`, `.codex/README.md`.
-  - Conformance verified via full 44-test automated suite and `demo.py`.
+  - Conformance verified via full 51-test automated suite and `demo.py`.
 - **Anthropic Claude Code**:
   - Configuration verified: Root `CLAUDE.md`, `.claude/skills/lumen/SKILL.md`.
   - Conformance verified via shared CLI and core contract tests.

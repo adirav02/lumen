@@ -132,7 +132,13 @@ def test_complete_multiturn_workflow_efficiency_benchmark(temp_workspace):
 
         # Create topic and validated exercise for attempt
         t = core.create_topic("prob-bench", name="Bayes Theorem", slug="bayes")
-        ex = core.create_exercise("prob-bench", "bayes_test", "Calculate P(A|B)", validation_state="validated")
+        ex = core.create_exercise("prob-bench", "bayes_test", "Calculate P(A|B)")
+        core.validate_exercise_version(
+            ex["exercise_version_id"],
+            reference_solution="P(A|B) = 0.4",
+            rubric={"criteria": "correct posterior probability", "max_points": 10},
+            checks=["mathematical_consistency_verified"],
+        )
 
         # Turn 4: Start attempt with idempotency receipt
         start_res = core.start_attempt("prob-bench", ex["exercise_version_id"], request_id="req-turn-4")
@@ -157,11 +163,13 @@ def test_complete_multiturn_workflow_efficiency_benchmark(temp_workspace):
         lumen_total_bytes = sum(lumen_turn_payloads.values())
         lumen_total_est_tokens = sum(estimate_tokens_chars4(v * "x") for v in lumen_turn_payloads.values())
 
-        savings_ratio = (naive_total_bytes - lumen_total_bytes) / naive_total_bytes
+        payload_reduction_ratio = (naive_total_bytes - lumen_total_bytes) / naive_total_bytes
 
         print(f"\n=======================================================")
-        print(f" MULTI-TURN TASK BENCHMARK (6 Turns)")
-        print(f" Token Estimator: ~4 characters per token (cl100k_base heuristic)")
+        print(f" SYNTHETIC MULTI-TURN TASK BENCHMARK (6 Turns)")
+        print(f" Token Estimator: ~4 characters per token (heuristic)")
+        print(f" Note: Heuristic payload reduction on synthetic task;")
+        print(f"       does not measure provider-billed total monetary cost.")
         print(f"=======================================================")
         print(f" Naive Baseline (Full Materials Re-injected Every Turn):")
         print(f"   Total Bytes:          {naive_total_bytes:,} bytes")
@@ -172,10 +180,10 @@ def test_complete_multiturn_workflow_efficiency_benchmark(temp_workspace):
         print(f"   ----------------------------------------------------")
         print(f"   Lumen Total Bytes:    {lumen_total_bytes:,} bytes")
         print(f"   Lumen Est Tokens:     {lumen_total_est_tokens:,} tokens")
-        print(f"   Context Reduction:    {savings_ratio * 100:.1f}% savings")
+        print(f"   Payload Reduction:    {payload_reduction_ratio * 100:.1f}%")
         print(f"=======================================================\n")
 
-        # Assert substantial savings across the multi-turn interaction (>50% savings)
-        assert savings_ratio > 0.50, f"Expected >50% context savings, got {savings_ratio*100:.1f}%"
+        # Assert substantial context payload reduction across synthetic multi-turn task (>50%)
+        assert payload_reduction_ratio > 0.50, f"Expected >50% heuristic payload reduction, got {payload_reduction_ratio*100:.1f}%"
     finally:
         core.close()

@@ -3,13 +3,32 @@
 import json
 from pathlib import Path
 import shutil
+import sqlite3
 import tempfile
 from typing import Any, Dict, Union
+import uuid
 import zipfile
 
 from ..errors import RestoreIntegrityError
 from ..storage.db import get_connection
 from ..storage.file_store import compute_sha256
+
+
+def _check_db_not_locked(db_path: Path) -> None:
+    """Ensure destination database is not actively locked by another process."""
+    if not db_path.is_file():
+        return
+    try:
+        con = sqlite3.connect(str(db_path), timeout=0.2)
+        try:
+            con.execute("BEGIN IMMEDIATE;")
+            con.rollback()
+        finally:
+            con.close()
+    except sqlite3.OperationalError as exc:
+        raise RestoreIntegrityError(
+            f"Target workspace database '{db_path}' is actively locked or in use: {exc}"
+        ) from exc
 
 
 def restore_workspace(
@@ -138,25 +157,49 @@ def restore_workspace(
         finally:
             db_con.close()
 
-        # 5. Atomically commit into target workspace
-        target_ws.mkdir(parents=True, exist_ok=True)
-        # Copy lumen.db
-        shutil.copy2(staged_db, target_ws / "lumen.db")
+        # 5. Prepare complete candidate directory in temporary sandbox
+        candidate_dir = temp_path / "candidate"
+        candidate_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(staged_db, candidate_dir / "lumen.db")
 
-        # Copy originals directory
-        dest_originals = target_ws / "originals"
-        dest_originals.mkdir(parents=True, exist_ok=True)
+        candidate_originals = candidate_dir / "originals"
+        candidate_originals.mkdir(parents=True, exist_ok=True)
         staged_originals = temp_path / "originals"
         if staged_originals.exists():
             for f in staged_originals.rglob("*"):
                 if f.is_file():
                     rel = f.relative_to(staged_originals)
-                    target_file = dest_originals / rel
+                    target_file = candidate_originals / rel
                     target_file.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(f, target_file)
 
-        # Copy manifest
-        shutil.copy2(manifest_file, target_ws / "backup_manifest.json")
+        shutil.copy2(manifest_file, candidate_dir / "backup_manifest.json")
+
+        # 6. Check active database locks and perform atomic recoverable activation
+        target_ws.parent.mkdir(parents=True, exist_ok=True)
+        existing_db = target_ws / "lumen.db"
+        if existing_db.exists():
+            _check_db_not_locked(existing_db)
+
+        rollback_dir = None
+        target_populated = target_ws.exists() and any(target_ws.iterdir())
+        if target_populated:
+            rollback_dir = target_ws.parent / f".rollback_{target_ws.name}_{uuid.uuid4().hex[:8]}"
+            shutil.move(str(target_ws), str(rollback_dir))
+        elif target_ws.exists():
+            target_ws.rmdir()
+
+        try:
+            shutil.move(str(candidate_dir), str(target_ws))
+        except Exception as exc:
+            if target_ws.exists():
+                shutil.rmtree(target_ws, ignore_errors=True)
+            if rollback_dir and rollback_dir.exists():
+                shutil.move(str(rollback_dir), str(target_ws))
+            raise RestoreIntegrityError(f"Restore activation failed: {exc}") from exc
+        else:
+            if rollback_dir and rollback_dir.exists():
+                shutil.rmtree(rollback_dir, ignore_errors=True)
 
     return {
         "status": "success",

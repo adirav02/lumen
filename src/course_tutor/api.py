@@ -162,32 +162,93 @@ class LumenCore:
         topic_slugs: Optional[List[str]] = None,
         request_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        file_p = Path(file_path).resolve()
-        file_sha256 = ""
-        if file_p.is_file():
-            import hashlib
-            file_sha256 = hashlib.sha256(file_p.read_bytes()).hexdigest()
+        # Phase 1: Immutable input preparation, staging, and extraction OUTSIDE write transactions
+        prep = self.ingestion.prepare_ingestion(
+            course_id=course_id,
+            file_path=file_path,
+            logical_name=logical_name,
+        )
+        staged_path = prep["staged_path"]
+        file_sha256 = prep["file_hash"]
 
         params = {
             "course_id": course_id,
             "file_sha256": file_sha256,
-            "logical_name": logical_name or (file_p.name if file_p.is_file() else str(file_path)),
+            "logical_name": prep["log_name"],
             "role": role,
             "structured_units": structured_units or [],
             "topic_slugs": sorted(topic_slugs or []),
         }
+        canon_hash = compute_canonical_hash(params)
 
-        def _do():
-            return self.ingestion.ingest_file(
-                course_id=course_id,
-                file_path=file_path,
-                logical_name=logical_name,
-                role=role,
-                structured_units=structured_units,
-                topic_slugs=topic_slugs,
-            )
+        # Check idempotency outside transaction
+        if request_id:
+            prior_receipt = self.receipt_repo.check_idempotency(request_id, canon_hash)
+            if prior_receipt:
+                staged_path.unlink(missing_ok=True)
+                return {
+                    "status": "success",
+                    "idempotent_replay": True,
+                    "receipt": prior_receipt.to_dict(),
+                    "data": prior_receipt.response_data,
+                }
 
-        return self._execute_idempotent(request_id, "ingest_source", course_id, params, _do)
+        # Phase 2: Short atomic commit phase persisting prepared results and receipt
+        try:
+            with atomic_transaction(self.con):
+                # Recheck idempotency inside write transaction in case of simultaneous requests
+                if request_id:
+                    prior_receipt = self.receipt_repo.check_idempotency(request_id, canon_hash)
+                    if prior_receipt:
+                        staged_path.unlink(missing_ok=True)
+                        return {
+                            "status": "success",
+                            "idempotent_replay": True,
+                            "receipt": prior_receipt.to_dict(),
+                            "data": prior_receipt.response_data,
+                        }
+
+                # Publish staged file to immutable store
+                stored = self.file_store.publish_staged(
+                    staged_path=staged_path,
+                    file_hash=file_sha256,
+                    original_filename=prep["orig_filename"],
+                )
+
+                data = self.ingestion.commit_prepared_ingestion(
+                    course_id=course_id,
+                    log_name=prep["log_name"],
+                    role=role,
+                    orig_filename=prep["orig_filename"],
+                    stored=stored,
+                    sections=prep["sections"],
+                    extraction_status=prep["extraction_status"],
+                    status_notes=prep["status_notes"],
+                    limitations=prep["limitations"],
+                    topic_slugs=topic_slugs,
+                    structured_units=structured_units,
+                )
+
+                receipt = None
+                if request_id:
+                    affected_ids = [str(data.get("source_version_id") or data.get("source_id") or "")]
+                    receipt = OperationReceipt(
+                        request_id=request_id,
+                        course_id=course_id,
+                        canonical_request_hash=canon_hash,
+                        operation_name="ingest_source",
+                        affected_ids=[a for a in affected_ids if a],
+                        response_data=data if isinstance(data, dict) else {"result": data},
+                    )
+                    self.receipt_repo.record_receipt(receipt)
+
+            res = {"status": "success", "data": data}
+            if receipt:
+                res["receipt"] = receipt.to_dict()
+            return res
+        finally:
+            if staged_path.exists():
+                staged_path.unlink(missing_ok=True)
 
     def get_extracted_sections(self, source_version_id: str) -> List[Dict[str, Any]]:
         return self.ingestion.get_extracted_sections(source_version_id)
@@ -290,7 +351,7 @@ class LumenCore:
         skill_mappings: Optional[List[str]] = None,
         reference_solution: str = "",
         rubric: Optional[Dict[str, Any]] = None,
-        validation_state: str = "validated",
+        validation_state: str = "pending_review",
         external_ref: str = "",
     ) -> Dict[str, Any]:
         ex_id = str(uuid.uuid4())
@@ -301,6 +362,11 @@ class LumenCore:
             external_ref=external_ref,
         )
         self.exercise_repo.create_exercise(exercise)
+
+        # New questions always default to pending_review.
+        # Do not accept "validated" merely because caller supplied that string;
+        # validation must be an explicit transition backed by recorded checks.
+        actual_validation_state = "pending_review" if validation_state == "validated" else validation_state
 
         ver_id = str(uuid.uuid4())
         ex_ver = ExerciseVersion(
@@ -314,7 +380,7 @@ class LumenCore:
             skill_mappings=skill_mappings or [],
             reference_solution=reference_solution,
             rubric=rubric or {},
-            validation_state=validation_state,
+            validation_state=actual_validation_state,
         )
         self.exercise_repo.create_exercise_version(ex_ver)
 
@@ -322,7 +388,7 @@ class LumenCore:
             "exercise_id": ex_id,
             "exercise_version_id": ver_id,
             "version_num": 1,
-            "validation_state": validation_state,
+            "validation_state": actual_validation_state,
         }
 
     # 8. Attempts & Learning
@@ -420,16 +486,20 @@ class LumenCore:
         attempt_id: str,
         evaluations: List[Dict[str, Any]],
         complete_attempt: bool = False,
+        submission_event_id: Optional[str] = None,
         request_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         params = {
             "attempt_id": attempt_id,
             "evaluations": evaluations,
             "complete_attempt": complete_attempt,
+            "submission_event_id": submission_event_id,
         }
 
         def _do():
-            return self.learning_service.commit_evidence(attempt_id, evaluations, complete_attempt)
+            return self.learning_service.commit_evidence(
+                attempt_id, evaluations, complete_attempt, submission_event_id=submission_event_id
+            )
 
         return self._execute_idempotent(request_id, "commit_evidence", None, params, _do)
 
@@ -480,11 +550,41 @@ class LumenCore:
     def validate_exercise_version(
         self,
         version_id: str,
-        validation_state: str = "validated",
+        reviewer: str = "host_agent",
+        checks: Optional[Union[Dict[str, Any], List[str]]] = None,
         notes: str = "",
+        validation_state: str = "validated",
+        reference_solution: Optional[str] = None,
+        rubric: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        ver = self.exercise_repo.validate_exercise_version(version_id, validation_state, notes)
+        ver = self.exercise_repo.validate_exercise_version(
+            version_id=version_id,
+            reviewer=reviewer,
+            checks=checks,
+            notes=notes,
+            status=validation_state,
+            reference_solution=reference_solution,
+            rubric=rubric,
+        )
         return ver.to_dict()
+
+    def update_exercise_version(
+        self,
+        version_id: str,
+        question_text: Optional[str] = None,
+        reference_solution: Optional[str] = None,
+        rubric: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        with atomic_transaction(self.con):
+            ver = self.exercise_repo.update_exercise_version(
+                version_id=version_id,
+                question_text=question_text,
+                reference_solution=reference_solution,
+                rubric=rubric,
+            )
+            for t_id in ver.topic_mappings:
+                self.evidence_repo.recompute_topic_state(ver.course_id, t_id)
+            return ver.to_dict()
 
     def assessment_progress(self, assessment_id: str) -> Dict[str, Any]:
         return self.diagnostic_service.get_progress(assessment_id)

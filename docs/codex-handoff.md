@@ -2,60 +2,59 @@
 
 **Date**: 2026-10-10  
 **Repository**: `lumen`  
-**Git Base**: Post-review fixes following commit `b80550e`  
+**Git Base**: Verified repairs following commit `88f81d5`  
 **Author / Initial Implementer**: Antigravity Assistant  
 **Target Recipient**: OpenAI Codex (and continuing engineering agents)
 
 ---
 
-## 1. Executive Summary & Review Defect Resolutions
+## 1. Executive Summary & Verified Defect Resolutions
 
-In response to Codex's review of commit `b80550e`, all identified defects have been investigated, fixed, and verified across 44 automated conformance tests and the synthetic probability demo.
+In response to Codex's probes on commit `88f81d5`, all 8 identified defects have been repaired and verified across 51 automated tests (including 7 comprehensive regression tests in `tests/test_verified_defect_repairs.py`) and the synthetic probability demo.
 
 ### Key Fixes Implemented
 
-1. **Storage Implementation Recovered**:
-   - Anchored `.gitignore` runtime patterns (`/.lumen/`, `/storage/`, `/data/`, `/backups/`, `/scratch/`) so `src/course_tutor/storage/` is tracked and committed in Git.
-   - Restored `src/course_tutor/storage/__init__.py`, `db.py`, `file_store.py`, `migrations.py`, and `repositories.py`.
-   - Migration 002 creates `source_sections` table for complete raw section persistence and locators.
+1. **Observed, Validated Work Required Before Awarding Scores (Defect 1)**:
+   - `record_assessment_item_score` enforces:
+     - An attempt linked to the exact assessment item, exercise version, course, and learner.
+     - A committed work submission with non-empty observed content.
+     - Active evaluated evidence tied to that submission.
+     - Rejection of non-finite values (`NaN`, `Inf`).
+   - `get_progress` reports separate projections for `observed_scores`, `coverage`, `assistance`, and `pending_work` without penalizing unattempted items.
 
-2. **Ingestion Fidelity & Semantic Enrichment**:
-   - File extraction and hashing execute outside database transactions to avoid holding SQLite locks during heavy I/O or PDF/PPTX parsing.
-   - Preamble preservation: surrounding conditions before section headings (e.g., "The following theorem assumes P(B) > 0") are preserved in unit content and parsed into `assumptions`.
-   - Default auto-extracted knowledge units and exercise versions to `pending_review`.
-   - Agent enrichment workflow: added `enrich_source_version` and `get_extracted_sections` to `IngestionPipeline`, `LumenCore`, and CLI, allowing callers to inspect raw extracted sections and publish structured semantic units.
-   - Realistic multi-page PDF, multi-slide PPTX, and Hebrew probability fixtures added to `examples/synthetic_probability/materials/`.
+2. **Assessment Scores Follow Evidence Corrections/Retractions (Defect 2)**:
+   - When evidence is retracted or superseded via `correct_evidence`, any linked scored assessment items revert to `score_status="pending_review"` and `points_awarded=None`.
+   - The assessment status reverts from `completed` back to `open`.
+   - Full audit history is recorded in `score_history` and persists across workspace reopening.
 
-3. **Dependency Expansion & Course Isolation**:
-   - Traverses complete dependency closure using cycle detection (`visited` set) without arbitrary depth caps.
-   - Rejects foreign-course units with explicit `CrossCourseViolationError`.
-   - Rejects ambiguous title dependencies with `ValidationError` when multiple units in the course share a title.
+3. **Removed Automatic Exercise Validation Throughout Public Interface (Defect 3)**:
+   - `create_exercise` defaults new questions to `pending_review` and ignores strings claiming `"validated"`.
+   - Explicit validation transition (`validate_exercise_version`) requires non-empty reference solution, structured rubric, and recorded verification checks.
+   - Question text or rubric updates (`update_exercise_version`) reset `validation_state` to `pending_review`, invalidate active evaluations, and revert linked assessment items to `pending_review`.
 
-4. **Evidence Ordering & Validation**:
-   - Evaluations tie to a specific, committed `work_submission` event (`event_id`).
-   - Assistance events occurring after the submission do not downgrade prior independent work.
-   - Strict boolean validation using `parse_bool`, rejecting ambiguous string representations.
-   - Duplicate active evaluations for the same attempt item are rejected without correction, preventing score inflation.
-   - Tutor corrections via `correct_evidence` cannot assign `independent_mastery` if a solution was revealed before submission.
+4. **Closed Evidence and Assistance Bypasses in LearningService (Defect 4)**:
+   - `commit_evidence` strictly rejects non-submission event IDs (e.g. `hint_given`).
+   - `record_attempt_event` rejects empty `work_submission` content.
+   - Calling `commit_evidence` or `correct_evidence` with `independent_mastery` is rejected if a hint or solution preceded the submission.
+   - Subpart metadata changes across correction cannot evade preceding assistance.
+   - Work submitted *before* later assistance preserves independent mastery eligibility.
 
-5. **Idempotency & Transaction Boundaries**:
-   - Canonical intent hashing hashes caller input arguments *before* generating IDs (retrying `create_course` without `course_id` returns the prior receipt instead of raising a conflict).
-   - Ingestion request hashes include file content SHA-256 and full structured units.
-   - Wrapped mutation and receipt commit atomically in the same database transaction.
+5. **Source Extraction Outside Database Transactions in ingest_source (Defect 5)**:
+   - `ingest_source` stages immutable bytes into a quarantine copy and runs format extractors outside SQLite transactions (`assert not con.in_transaction`).
+   - Fast atomic commit phase publishes staged bytes and records metadata and idempotency receipts.
 
-6. **Diagnostic Assessment Workflow**:
-   - Enforces question validation for diagnostic blueprints (`UnvalidatedQuestionError`).
-   - Public paths exposed: `start_assessment_item_attempt` and `record_assessment_item_score` on `DiagnosticService`, `LumenCore`, and CLI.
-   - Transparent denominators: reports observed rubric scores on attempted items without penalizing unattempted items as failures.
+6. **Reported Incomplete Retrieval and Preserved Review Status (Defect 6)**:
+   - `expand_unit_dependencies` returns `ClosureResult` distinguishing `expansion_requested` from `closure_complete`, and records `unresolved_dependencies` and `missing_roots`.
+   - `read_units` and `search` return `status`, `is_pending_review`, and uncertainty flags.
 
-7. **Backup & Restore Audit**:
-   - Audits actual database `source_versions` table against restored files (verifying existence and SHA-256 for all stored assets).
-   - Stages completely in a temporary sandbox before activating the target workspace.
-   - Refuses to overwrite populated workspaces unless `force=True`.
+7. **Recoverable Restore Activation (Defect 7)**:
+   - `restore_workspace` stages complete candidate in a sandbox and checks active database locks before activation.
+   - Backs up previous workspace to a rollback directory before directory swap.
+   - On activation failure, restores previous workspace completely with zero data loss.
 
-8. **Efficiency Benchmark**:
-   - Comprehensive multi-turn task benchmark (6 turns: brief, search, expansion, reading, attempt, receipt) with declared ~4 chars/token heuristic in `tests/test_efficiency.py`.
-   - Demonstrates 71.4% payload reduction across complete multi-turn interaction compared to naive full-source re-injection.
+8. **Efficiency Benchmark Labeled as Synthetic Heuristic (Defect 8)**:
+   - Benchmark labeled as heuristic payload reduction on synthetic tasks.
+   - Removed all claims of measured total cost or model token savings.
 
 ---
 
@@ -70,9 +69,9 @@ python3 -m venv .venv
 .venv/bin/lumen capabilities
 # Output: {"status": "success", "data": {"contract_version": "1.0.0", "runtime": {"fts5_supported": true}, ...}}
 
-# 3. Full automated test suite (44/44 passed)
+# 3. Full automated test suite (51/51 passed)
 .venv/bin/pytest -v
-# Output: 44 passed in 1.94s
+# Output: 51 passed in 2.10s
 
 # 4. Standalone synthetic probability course demonstration
 .venv/bin/python demo.py
@@ -80,7 +79,7 @@ python3 -m venv .venv
 
 # 5. Multi-turn efficiency benchmark test
 .venv/bin/pytest tests/test_efficiency.py -s -v
-# Output: 71.4% payload reduction across complete 6-turn interaction cycle
+# Output: 71.4% heuristic payload reduction across synthetic 6-turn task
 ```
 
 ---

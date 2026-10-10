@@ -100,6 +100,12 @@ def main():
             skill_mappings=["bayes_calc"],
             reference_solution="P(D|+) = (0.90*0.01) / (0.90*0.01 + 0.10*0.99) ≈ 0.083",
         )
+        core.validate_exercise_version(
+            ex["exercise_version_id"],
+            reference_solution="P(D|+) ≈ 0.083",
+            rubric={"criteria": "correct posterior probability", "max_points": 10},
+            checks=["verified_probabilistic_solution"],
+        )
         att = core.start_attempt(course_id, ex["exercise_version_id"], learner_id="student_1")["data"]
         att_id = att["id"]
         print(f"  • Attempt started: {att_id} (Status: {att['status']})")
@@ -136,20 +142,15 @@ def main():
         print(f"  • Unassessed topics: {brief['coverage']['unassessed_topics']}")
         print(f"  • Recommended next action: {brief['recommended_next_actions'][0]['description']}")
 
-        # Step 8: Evidence Correction (Audit History Preservation)
+        # Step 8: Evidence Retraction (Audit History Preservation)
         print("\n[9] Demonstrating tutor mistake retraction and state recomputation...")
         ev_id = ev["id"]
         corr = core.correct_evidence(
             evidence_id=ev_id,
-            correction_reason="Reviewed reasoning: student independently derived denominator prior to hint.",
-            replacement={
-                "topic_id": t_bayes["id"],
-                "skill_id": "bayes_calc",
-                "demonstrated_level": "independent_mastery",
-                "rationale": "Independent derivation confirmed in rough work.",
-            },
+            correction_reason="Rubric ambiguity identified: retracting assisted evidence to preserve strict audit integrity.",
         )["data"]
         recomputed = corr["recomputed_topic_states"][t_bayes["id"]]
+        print(f"  • Evidence Retracted: Audit history preserved, topic state recomputed.")
         print(f"  • Recomputed Topic State: Independent Successes={recomputed['independent_success_count']}, Assisted Successes={recomputed['assisted_success_count']}")
 
         # Step 9: Diagnostic Assessment Execution

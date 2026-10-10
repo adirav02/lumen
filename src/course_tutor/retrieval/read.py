@@ -24,22 +24,45 @@ def read_units(
     src_repo = SourceRepository(con)
 
     if expand_dependencies:
-        all_units = expand_unit_dependencies(con, course_id, unit_ids)
+        closure = expand_unit_dependencies(con, course_id, unit_ids)
+        all_units = closure
+        unresolved_deps = closure.unresolved_dependencies
+        missing_roots = closure.missing_roots
+        closure_complete = closure.closure_complete
     else:
+        unresolved_deps = []
+        missing_roots = []
         all_units = {}
         for uid in unit_ids:
             u = repo.get_unit(uid)
+            if not u:
+                matching = [u for u in repo.list_units(course_id) if u.title.strip().lower() == uid.strip().lower()]
+                if matching:
+                    u = matching[0]
+                else:
+                    foreign = [u for u in repo.find_units_by_title(uid) if u.course_id != course_id]
+                    if foreign:
+                        raise CrossCourseViolationError("KnowledgeUnit", foreign[0].id, course_id, foreign[0].course_id)
+                    missing_roots.append(uid)
             if u:
                 if u.course_id != course_id:
                     raise CrossCourseViolationError("KnowledgeUnit", uid, course_id, u.course_id)
                 all_units[u.id] = u
+        closure_complete = len(missing_roots) == 0
 
     formatted_units = []
     for u in all_units.values():
         prov_list = repo.get_provenance(u.id)
         provenance_details = []
+        uncertainties = []
         for p in prov_list:
             s_ver = src_repo.get_source_version(p.source_version_id)
+            if s_ver and s_ver.extraction_status != "extracted":
+                uncertainties.append({
+                    "source_version_id": s_ver.id,
+                    "extraction_status": s_ver.extraction_status,
+                    "extraction_notes": s_ver.extraction_notes,
+                })
             provenance_details.append({
                 "source_version_id": p.source_version_id,
                 "original_filename": s_ver.original_filename if s_ver else None,
@@ -55,6 +78,8 @@ def read_units(
             "id": u.id,
             "kind": u.kind,
             "title": u.title,
+            "status": u.status,
+            "is_pending_review": u.status == "pending_review",
             "content": u.content,
             "summary": u.summary,
             "assumptions": u.assumptions,
@@ -62,6 +87,7 @@ def read_units(
             "exceptions": u.exceptions,
             "dependencies": u.dependencies,
             "provenance": provenance_details,
+            "uncertainty_flags": uncertainties,
             "revision": u.revision,
         })
 
@@ -70,7 +96,13 @@ def read_units(
         "requested_ids": unit_ids,
         "units": formatted_units,
         "total_units_returned": len(formatted_units),
-        "dependencies_expanded": expand_dependencies,
+        "expansion_requested": expand_dependencies,
+        "closure_complete": closure_complete,
+        "dependencies_expanded": expand_dependencies and closure_complete,
+        "unresolved_dependencies": unresolved_deps,
+        "missing_roots": missing_roots,
+        "has_pending_review_units": any(u["status"] == "pending_review" for u in formatted_units),
+        "pending_review_unit_ids": [u["id"] for u in formatted_units if u["status"] == "pending_review"],
     }
 
 

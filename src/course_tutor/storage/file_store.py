@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import shutil
 from typing import NamedTuple, Optional, Union
+import uuid
 
 from ..errors import SourceCorruptedError, WorkspaceError
 
@@ -113,6 +114,52 @@ class FileStore:
         finally:
             if temp_staged.exists():
                 temp_staged.unlink(missing_ok=True)
+
+    def stage_file(
+        self, src_path: Union[str, Path], original_filename: Optional[str] = None
+    ) -> tuple[Path, str, int, str]:
+        """Stage a source file into isolated quarantine copy and compute its sha256 hash."""
+        source = Path(src_path).resolve()
+        if not source.is_file():
+            raise WorkspaceError(str(source), f"Source file does not exist: {source}")
+
+        orig_name = original_filename or source.name
+        sanitized = sanitize_filename(orig_name)
+        stage_token = uuid.uuid4().hex
+        staged_path = self.staging_dir / f"stage_{stage_token}_{sanitized}"
+        shutil.copy2(source, staged_path)
+
+        file_hash = compute_sha256(staged_path)
+        byte_size = staged_path.stat().st_size
+        mime_type, _ = mimetypes.guess_type(orig_name)
+        mime_type = mime_type or "application/octet-stream"
+        return staged_path, file_hash, byte_size, mime_type
+
+    def publish_staged(
+        self, staged_path: Path, file_hash: str, original_filename: str
+    ) -> StoredFile:
+        """Publish an already staged and verified file into immutable storage."""
+        sanitized = sanitize_filename(original_filename)
+        dest_name = f"{file_hash[:16]}_{sanitized}"
+        dest_relpath = f"originals/{dest_name}"
+        dest_path = self.originals_dir / dest_name
+
+        byte_size = staged_path.stat().st_size
+        mime_type, _ = mimetypes.guess_type(original_filename)
+        mime_type = mime_type or "application/octet-stream"
+
+        if not dest_path.exists():
+            shutil.move(staged_path, dest_path)
+        else:
+            staged_path.unlink(missing_ok=True)
+
+        return StoredFile(
+            file_hash=file_hash,
+            byte_size=byte_size,
+            mime_type=mime_type,
+            storage_relpath=dest_relpath,
+            original_filename=original_filename,
+        )
 
     def store_bytes(self, content: bytes, original_filename: str) -> StoredFile:
         """Store raw bytes into immutable store via staging."""

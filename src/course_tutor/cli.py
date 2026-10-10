@@ -255,8 +255,10 @@ def main(argv: Optional[List[str]] = None) -> None:
                 elif op == "validate_exercise_version":
                     res = core.validate_exercise_version(
                         version_id=payload["version_id"],
-                        validation_state=payload.get("validation_state", "validated"),
+                        reviewer=payload.get("reviewer", "cli_user"),
+                        checks=payload.get("checks", {}),
                         notes=payload.get("notes", ""),
+                        validation_state=payload.get("validation_state", "validated"),
                     )
                     output_json({"status": "success", "data": res})
 
