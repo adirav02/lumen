@@ -118,6 +118,38 @@ class TopicAlias:
         return asdict(self)
 
 
+def parse_bool(val: Any) -> bool:
+    """Strictly parse boolean values, rejecting ambiguous or misleading representations."""
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return val != 0
+    if isinstance(val, str):
+        s = val.strip().lower()
+        if s in ("true", "1", "yes", "t"):
+            return True
+        if s in ("false", "0", "no", "f", ""):
+            return False
+    raise ValueError(f"Cannot parse boolean from {val!r}")
+
+
+@dataclass
+class SourceSection:
+    id: str
+    source_version_id: str
+    course_id: str
+    section_index: int
+    label: str
+    text: str
+    quality_flag: str = "clean"
+    notes: str = ""
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    created_at: str = field(default_factory=utc_now_iso)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
 @dataclass
 class KnowledgeUnit:
     id: str
@@ -130,7 +162,7 @@ class KnowledgeUnit:
     symbol_definitions: Dict[str, str] = field(default_factory=dict)
     exceptions: List[str] = field(default_factory=list)
     dependencies: List[str] = field(default_factory=list)  # unit IDs or topic IDs
-    status: str = "published"  # 'published', 'pending_review'
+    status: str = "pending_review"  # 'published', 'pending_review'
     revision: int = 1
     created_at: str = field(default_factory=utc_now_iso)
     updated_at: str = field(default_factory=utc_now_iso)
@@ -178,7 +210,7 @@ class ExerciseVersion:
     skill_mappings: List[str] = field(default_factory=list)
     reference_solution: str = ""
     rubric: Dict[str, Any] = field(default_factory=dict)
-    validation_state: str = "validated"  # 'validated', 'pending_review', 'contradictory'
+    validation_state: str = "pending_review"  # 'validated', 'pending_review', 'contradictory'
     validation_notes: str = ""
     created_at: str = field(default_factory=utc_now_iso)
 

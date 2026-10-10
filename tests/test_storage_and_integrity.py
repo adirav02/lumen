@@ -14,6 +14,7 @@ from course_tutor.errors import (
     RestoreIntegrityError,
     SourceCorruptedError,
     StaleRevisionError,
+    ValidationError,
 )
 from course_tutor.storage.file_store import FileStore
 
@@ -241,3 +242,168 @@ def test_backup_and_restore_fidelity(temp_workspace):
             assert search_res["results_count"] >= 1
         finally:
             restored_core.close()
+
+
+def test_idempotency_retry_without_course_id_returns_prior_receipt(temp_workspace):
+    """Verify that retrying create_course without explicit course_id returns cached receipt rather than conflict."""
+    core = LumenCore(temp_workspace)
+    try:
+        # First call without course_id
+        res1 = core.create_course("Probability", request_id="req-auto-cid")
+        assert res1["status"] == "success"
+        cid1 = res1["data"]["id"]
+
+        # Retry with identical intent and same request_id
+        res2 = core.create_course("Probability", request_id="req-auto-cid")
+        assert res2["status"] == "success"
+        assert res2.get("idempotent_replay") is True
+        assert res2["data"]["id"] == cid1
+
+        # Reusing request_id with different intent raises conflict
+        with pytest.raises(IdempotencyConflictError):
+            core.create_course("Linear Algebra", request_id="req-auto-cid")
+    finally:
+        core.close()
+
+
+def test_restore_refuses_to_overwrite_populated_workspace_without_force(temp_workspace):
+    """Verify restore refuses to overwrite an existing populated workspace unless force=True."""
+    core = LumenCore(temp_workspace)
+    try:
+        core.create_course("Math", course_id="math-pop")
+        f = temp_workspace / "notes.txt"
+        f.write_text("### Definition: Set\nA collection of distinct objects.", encoding="utf-8")
+        core.ingest_source("math-pop", f, logical_name="notes")
+
+        backup_zip = temp_workspace / "math_backup.zip"
+        core.backup(backup_zip)
+    finally:
+        core.close()
+
+    # Create target workspace that is already populated
+    populated_target = temp_workspace / "existing_populated_target"
+    populated_target.mkdir()
+    (populated_target / "existing_file.txt").write_text("important user data", encoding="utf-8")
+
+    # Restore without force must fail
+    with pytest.raises(RestoreIntegrityError) as exc_info:
+        LumenCore.restore(backup_zip, populated_target, force=False)
+    assert "already populated" in str(exc_info.value).lower()
+
+    # Restore with force=True succeeds
+    res = LumenCore.restore(backup_zip, populated_target, force=True)
+    assert res["status"] == "success"
+    assert (populated_target / "lumen.db").is_file()
+
+
+def test_restore_audits_database_source_versions_against_files(temp_workspace):
+    """Verify restore checks that all files referenced in DB source_versions actually exist in backup."""
+    core = LumenCore(temp_workspace)
+    try:
+        core.create_course("Math", course_id="math-audit")
+        f = temp_workspace / "ref.txt"
+        f.write_text("### Theorem: Fundamental Theorem\nStatement here.", encoding="utf-8")
+        core.ingest_source("math-audit", f, logical_name="ref")
+
+        backup_zip = temp_workspace / "audit_backup.zip"
+        core.backup(backup_zip)
+    finally:
+        core.close()
+
+    # Unpack into staging dir
+    staging = temp_workspace / "unpacked_for_tampering"
+    import zipfile
+    with zipfile.ZipFile(backup_zip, "r") as z:
+        z.extractall(staging)
+
+    # Delete the originals directory so DB source_versions points to non-existent files
+    for p in (staging / "originals").glob("*"):
+        p.unlink()
+
+    target_ws = temp_workspace / "audit_target_ws"
+    with pytest.raises(RestoreIntegrityError) as exc_info:
+        LumenCore.restore(staging, target_ws)
+    assert "missing" in str(exc_info.value).lower()
+
+
+def test_dependency_expansion_closure_and_cross_course_and_ambiguity(temp_workspace):
+    """Verify complete dependency closure (no depth=3 cap), cycle safety, cross-course rejection, and title ambiguity."""
+    core = LumenCore(temp_workspace)
+    try:
+        core.create_course("Probability", course_id="prob-closure")
+        core.create_course("Physics", course_id="phys-other")
+
+        # 1. 5-unit deep dependency chain: u1 -> u2 -> u3 -> u4 -> u5
+        from course_tutor.retrieval.expansion import expand_unit_dependencies
+        from course_tutor.models import KnowledgeUnit
+
+        for i in range(1, 6):
+            deps = [f"u{i+1}"] if i < 5 else []
+            unit = KnowledgeUnit(
+                id=f"u{i}",
+                course_id="prob-closure",
+                kind="definition",
+                title=f"Unit {i}",
+                content=f"Content for unit {i}",
+                dependencies=deps,
+                status="published",
+            )
+            core.knowledge_repo.create_unit(unit, [], [])
+
+        # Expand u1: must resolve all 5 units (proving no max_depth=3 truncation)
+        resolved = expand_unit_dependencies(core.con, "prob-closure", ["u1"])
+        assert len(resolved) == 5
+        assert set(resolved.keys()) == {"u1", "u2", "u3", "u4", "u5"}
+
+        # 2. Cycle safety: add dependency from u5 -> u1
+        u5 = core.knowledge_repo.get_unit("u5")
+        u5.dependencies = ["u1"]
+        # Update u5 dependencies
+        core.con.execute(
+            "UPDATE knowledge_units SET dependencies = ? WHERE id = 'u5'",
+            ('["u1"]',),
+        )
+        resolved_cycle = expand_unit_dependencies(core.con, "prob-closure", ["u1"])
+        assert len(resolved_cycle) == 5
+
+        # 3. Foreign course rejection
+        foreign_unit = KnowledgeUnit(
+            id="foreign-u1",
+            course_id="phys-other",
+            kind="theorem",
+            title="Newton Law",
+            content="F = ma",
+            status="published",
+        )
+        core.knowledge_repo.create_unit(foreign_unit, [], [])
+
+        # Attempting to expand with a foreign unit ID must raise CrossCourseViolationError
+        with pytest.raises(CrossCourseViolationError):
+            expand_unit_dependencies(core.con, "prob-closure", ["foreign-u1"])
+
+        # 4. Ambiguous title dependency rejection
+        dup1 = KnowledgeUnit(
+            id="dup-1",
+            course_id="prob-closure",
+            kind="theorem",
+            title="Bayes Lemma",
+            content="Variant 1",
+            status="published",
+        )
+        dup2 = KnowledgeUnit(
+            id="dup-2",
+            course_id="prob-closure",
+            kind="theorem",
+            title="Bayes Lemma",
+            content="Variant 2",
+            status="published",
+        )
+        core.knowledge_repo.create_unit(dup1, [], [])
+        core.knowledge_repo.create_unit(dup2, [], [])
+
+        # Referencing "Bayes Lemma" by title when multiple units exist in the course raises ValidationError
+        with pytest.raises(ValidationError) as exc_info:
+            expand_unit_dependencies(core.con, "prob-closure", ["Bayes Lemma"])
+        assert "ambiguous" in str(exc_info.value).lower()
+    finally:
+        core.close()

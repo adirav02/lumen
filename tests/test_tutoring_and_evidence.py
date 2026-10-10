@@ -8,7 +8,7 @@ import tempfile
 import pytest
 
 from course_tutor.api import LumenCore
-from course_tutor.errors import UnvalidatedQuestionError
+from course_tutor.errors import UnvalidatedQuestionError, ValidationError
 
 
 @pytest.fixture
@@ -276,3 +276,187 @@ def test_f20_session_resume_without_full_transcript(temp_workspace):
         assert resume_res["current_revision"] == 4
     finally:
         core2.close()
+
+
+def test_evidence_committed_submission_anchoring(temp_workspace):
+    """Verify evaluations tie to committed submissions: assistance after submission does not downgrade prior work."""
+    core = LumenCore(temp_workspace)
+    try:
+        core.create_course("Probability", course_id="prob-anchor")
+        t = core.create_topic("prob-anchor", name="Independence", slug="indep")
+
+        ex = core.create_exercise("prob-anchor", "indep_ex", "Prove A and B independent", validation_state="validated")
+        att = core.start_attempt("prob-anchor", ex["exercise_version_id"])["data"]
+        att_id = att["id"]
+
+        # Step 1: Student submits independent work
+        sub1 = core.record_attempt_event(att_id, expected_revision=1, event_type="work_submission", content="P(A∩B)=P(A)P(B)")["data"]
+        sub1_id = sub1["event"]["id"]
+
+        # Step 2: Later, tutor gives a general hint or solution for something else
+        core.record_attempt_event(att_id, expected_revision=2, event_type="hint_given", content="Hint for followup")
+
+        # Step 3: Evaluate sub1. Because the hint occurred AFTER sub1, sub1 remains independent_mastery!
+        res = core.commit_evidence(att_id, evaluations=[{
+            "submission_event_id": sub1_id,
+            "topic_id": t["id"],
+            "skill_id": "indep_proof",
+            "correct": "true",
+        }])["data"]
+
+        ev = res["evidence_created"][0]
+        assert ev["demonstrated_level"] == "independent_mastery"
+        assert res["affected_topic_states"][t["id"]]["independent_success_count"] == 1
+    finally:
+        core.close()
+
+
+def test_strict_boolean_parsing(temp_workspace):
+    """Verify parse_bool accepts clean booleans and rejects ambiguous string representations."""
+    core = LumenCore(temp_workspace)
+    try:
+        core.create_course("Probability", course_id="prob-bool")
+        t = core.create_topic("prob-bool", name="Bayes", slug="bayes")
+        ex = core.create_exercise("prob-bool", "bayes_bool", "Question")
+        att = core.start_attempt("prob-bool", ex["exercise_version_id"])["data"]
+        att_id = att["id"]
+
+        core.record_attempt_event(att_id, expected_revision=1, event_type="work_submission", content="Answer")
+
+        # Rejects ambiguous string like "maybe"
+        with pytest.raises(ValidationError):
+            core.commit_evidence(att_id, evaluations=[{
+                "topic_id": t["id"],
+                "skill_id": "skill_1",
+                "correct": "maybe",
+            }])
+
+        # Accepts "true" string
+        eval_res = core.commit_evidence(att_id, evaluations=[{
+            "topic_id": t["id"],
+            "skill_id": "skill_1",
+            "correct": "true",
+            "partial": "false",
+        }])["data"]
+        assert eval_res["evidence_created"][0]["demonstrated_level"] == "independent_mastery"
+    finally:
+        core.close()
+
+
+def test_duplicate_evaluation_rejection_prevents_inflation(temp_workspace):
+    """Verify re-evaluating the same attempt item without correction is rejected to prevent score inflation."""
+    core = LumenCore(temp_workspace)
+    try:
+        core.create_course("Probability", course_id="prob-dup")
+        t = core.create_topic("prob-dup", name="Bayes", slug="bayes")
+        ex = core.create_exercise("prob-dup", "bayes_dup", "Question")
+        att = core.start_attempt("prob-dup", ex["exercise_version_id"])["data"]
+        att_id = att["id"]
+
+        core.record_attempt_event(att_id, expected_revision=1, event_type="work_submission", content="Answer")
+
+        # First evaluation succeeds
+        core.commit_evidence(att_id, evaluations=[{
+            "topic_id": t["id"],
+            "skill_id": "bayes_skill",
+            "correct": True,
+        }])
+
+        # Second evaluation on the same attempt/skill/subpart without correction raises ValidationError
+        with pytest.raises(ValidationError) as exc_info:
+            core.commit_evidence(att_id, evaluations=[{
+                "topic_id": t["id"],
+                "skill_id": "bayes_skill",
+                "correct": True,
+            }])
+        assert "active evidence already exists" in str(exc_info.value).lower()
+    finally:
+        core.close()
+
+
+def test_tutor_correction_cannot_bypass_assistance_history(temp_workspace):
+    """Verify tutor correction cannot award independent mastery if a solution was revealed before submission."""
+    core = LumenCore(temp_workspace)
+    try:
+        core.create_course("Probability", course_id="prob-corr")
+        t = core.create_topic("prob-corr", name="Bayes", slug="bayes")
+        ex = core.create_exercise("prob-corr", "bayes_corr", "Question")
+        att = core.start_attempt("prob-corr", ex["exercise_version_id"])["data"]
+        att_id = att["id"]
+
+        # Solution revealed before submission
+        core.record_attempt_event(att_id, expected_revision=1, event_type="solution_revealed", content="Answer is 0.5")
+        core.record_attempt_event(att_id, expected_revision=2, event_type="work_submission", content="Answer is 0.5")
+
+        eval_res = core.commit_evidence(att_id, evaluations=[{
+            "topic_id": t["id"],
+            "skill_id": "bayes_rule",
+            "correct": True,
+        }])["data"]
+        ev_id = eval_res["evidence_created"][0]["id"]
+        assert eval_res["evidence_created"][0]["demonstrated_level"] == "assisted_success"
+
+        # Attempt to correct to independent_mastery must fail
+        with pytest.raises(ValidationError) as exc_info:
+            core.correct_evidence(
+                evidence_id=ev_id,
+                correction_reason="Tutor wants to mark as independent",
+                replacement={
+                    "topic_id": t["id"],
+                    "skill_id": "bayes_rule",
+                    "demonstrated_level": "independent_mastery",
+                },
+            )
+        assert "cannot assign 'independent_mastery'" in str(exc_info.value).lower()
+    finally:
+        core.close()
+
+
+def test_assessment_scoring_lifecycle_and_transparent_reporting(temp_workspace):
+    """Verify complete diagnostic lifecycle: item attempt, submission, scoring, and non-penalizing denominators."""
+    core = LumenCore(temp_workspace)
+    try:
+        core.create_course("Probability", course_id="prob-diag-flow")
+        t = core.create_topic("prob-diag-flow", name="Expectation", slug="exp")
+
+        ex1 = core.create_exercise("prob-diag-flow", "exp_1", "Compute E[X] for fair die", validation_state="validated")
+        ex2 = core.create_exercise("prob-diag-flow", "exp_2", "Compute E[X^2] for fair die", validation_state="validated")
+
+        diag = core.create_assessment(
+            "prob-diag-flow",
+            "Expectation Diagnostic",
+            blueprint={"topic_ids": [t["id"]]},
+            selected_exercise_version_ids=[ex1["exercise_version_id"], ex2["exercise_version_id"]],
+        )["data"]
+        diag_id = diag["assessment_id"]
+
+        # Item 1: Start item attempt via diagnostic service
+        item1_att = core.start_assessment_item_attempt(diag_id, item_order=1)
+        att_id = item1_att["attempt"]["id"]
+        assert item1_att["attempt"]["mode"] == "diagnostic"
+
+        # Submit work and evaluate item 1
+        core.record_attempt_event(att_id, expected_revision=1, event_type="work_submission", content="E[X] = 3.5")
+        core.commit_evidence(att_id, evaluations=[{
+            "topic_id": t["id"],
+            "skill_id": "expected_value",
+            "correct": True,
+        }])
+
+        # Record rubric score (8.5 out of 10.0 points)
+        score_res = core.record_assessment_item_score(diag_id, item_order=1, points_awarded=8.5, attempt_id=att_id)
+        assert score_res["points_awarded"] == 8.5
+
+        # Check progress: 1 of 2 items completed.
+        # Observed percentage on attempted items is 85% (8.5 / 10.0), NOT 42.5% (8.5 / 20.0)!
+        prog = core.assessment_progress(diag_id)
+        assert prog["total_items"] == 2
+        assert prog["completed_items"] == 1
+        assert prog["items_unattempted"] == 1
+        assert prog["total_awarded_points"] == 8.5
+        assert prog["attempted_possible_points"] == 10.0
+        assert prog["total_possible_points"] == 20.0
+        assert prog["observed_percentage"] == 85.0
+        assert prog["completion_percentage"] == 50.0
+    finally:
+        core.close()

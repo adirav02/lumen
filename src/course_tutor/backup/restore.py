@@ -15,17 +15,26 @@ from ..storage.file_store import compute_sha256
 def restore_workspace(
     backup_path: Union[str, Path],
     target_workspace: Union[str, Path],
+    force: bool = False,
 ) -> Dict[str, Any]:
     """Restore a workspace snapshot with strict validation of database and source files.
 
     Verifies manifest presence, database hash, all referenced original source files,
-    database foreign keys, and SQLite integrity check.
+    database foreign keys, SQLite integrity check, and audits database source_versions.
+    Stages completely in a sandbox before activating target workspace.
+    Refuses to overwrite an existing populated workspace unless force=True.
     """
     backup_src = Path(backup_path).resolve()
     target_ws = Path(target_workspace).resolve()
 
     if not backup_src.exists():
         raise RestoreIntegrityError(f"Backup source '{backup_src}' does not exist.")
+
+    # Guard populated workspaces against accidental destruction
+    if target_ws.exists() and any(target_ws.iterdir()) and not force:
+        raise RestoreIntegrityError(
+            f"Target workspace '{target_ws}' is already populated. Refusing to overwrite without force=True."
+        )
 
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
@@ -64,7 +73,7 @@ def restore_workspace(
                 f"Database integrity violation: expected hash {expected_db_hash}, got {actual_db_hash}."
             )
 
-        # 3. Verify all referenced source files (F24 & F25)
+        # 3. Verify all manifest-referenced source files (F24 & F25)
         sources_list = manifest.get("sources", [])
         verified_sources_count = 0
         for src_meta in sources_list:
@@ -88,7 +97,7 @@ def restore_workspace(
                 )
             verified_sources_count += 1
 
-        # 4. Check database internal integrity and foreign keys
+        # 4. Check database internal integrity, foreign keys, and audit source_versions
         db_con = get_connection(staged_db)
         try:
             # PRAGMA integrity_check
@@ -104,6 +113,26 @@ def restore_workspace(
                     f"Foreign key constraint violation in restored database: {len(fk_errors)} violations found."
                 )
 
+            # Audit actual database source_versions against restored disk assets
+            db_sources = db_con.execute(
+                "SELECT id, file_hash, storage_relpath, original_filename FROM source_versions"
+            ).fetchall()
+            for src_row in db_sources:
+                relpath = src_row["storage_relpath"]
+                expected_hash = src_row["file_hash"]
+                staged_file = temp_path / relpath
+                if not staged_file.is_file():
+                    raise RestoreIntegrityError(
+                        f"Database references source file '{relpath}' (ID: {src_row['id']}) which is missing from backup assets.",
+                        details={"missing_file": relpath, "source_version_id": src_row["id"]},
+                    )
+                actual_hash = compute_sha256(staged_file)
+                if actual_hash != expected_hash:
+                    raise RestoreIntegrityError(
+                        f"Database reference integrity error: hash mismatch for '{relpath}'. Expected {expected_hash}, got {actual_hash}.",
+                        details={"file_path": relpath, "expected_hash": expected_hash, "actual_hash": actual_hash},
+                    )
+
             # Query restored courses
             courses = [r["id"] for r in db_con.execute("SELECT id FROM courses").fetchall()]
         finally:
@@ -111,17 +140,19 @@ def restore_workspace(
 
         # 5. Atomically commit into target workspace
         target_ws.mkdir(parents=True, exist_ok=True)
-        # Move lumen.db
+        # Copy lumen.db
         shutil.copy2(staged_db, target_ws / "lumen.db")
 
-        # Move originals directory
+        # Copy originals directory
         dest_originals = target_ws / "originals"
         dest_originals.mkdir(parents=True, exist_ok=True)
         staged_originals = temp_path / "originals"
         if staged_originals.exists():
             for f in staged_originals.rglob("*"):
                 if f.is_file():
-                    target_file = dest_originals / f.name
+                    rel = f.relative_to(staged_originals)
+                    target_file = dest_originals / rel
+                    target_file.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(f, target_file)
 
         # Copy manifest

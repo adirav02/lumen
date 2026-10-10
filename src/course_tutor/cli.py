@@ -64,6 +64,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         elif op == "restore":
             backup_path = payload.get("backup_path") or payload.get("backup_file")
             target_ws = payload.get("target_workspace") or ws_path
+            force = payload.get("force", False)
             if not backup_path:
                 output_json({
                     "status": "error",
@@ -71,7 +72,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                     "message": "Missing 'backup_path' parameter for restore.",
                     "details": {},
                 }, exit_code=1)
-            res = LumenCore.restore(backup_path, target_ws)
+            res = LumenCore.restore(backup_path, target_ws, force=force)
             output_json({"status": "success", "data": res})
 
         else:
@@ -236,6 +237,44 @@ def main(argv: Optional[List[str]] = None) -> None:
 
                 elif op == "assessment_progress":
                     res = core.assessment_progress(assessment_id=payload["assessment_id"])
+                    output_json({"status": "success", "data": res})
+
+                elif op == "get_extracted_sections":
+                    res = core.get_extracted_sections(source_version_id=payload["source_version_id"])
+                    output_json({"status": "success", "data": res})
+
+                elif op == "enrich_source_version":
+                    res = core.enrich_source_version(
+                        source_version_id=payload["source_version_id"],
+                        structured_units=payload["structured_units"],
+                        publish=payload.get("publish", True),
+                        topic_slugs=payload.get("topic_slugs"),
+                    )
+                    output_json({"status": "success", "data": res})
+
+                elif op == "validate_exercise_version":
+                    res = core.validate_exercise_version(
+                        version_id=payload["version_id"],
+                        validation_state=payload.get("validation_state", "validated"),
+                        notes=payload.get("notes", ""),
+                    )
+                    output_json({"status": "success", "data": res})
+
+                elif op == "start_assessment_item_attempt":
+                    res = core.start_assessment_item_attempt(
+                        assessment_id=payload["assessment_id"],
+                        item_order=payload["item_order"],
+                        learner_id=payload.get("learner_id", "default_learner"),
+                    )
+                    output_json({"status": "success", "data": res})
+
+                elif op == "record_assessment_item_score":
+                    res = core.record_assessment_item_score(
+                        assessment_id=payload["assessment_id"],
+                        item_order=payload["item_order"],
+                        points_awarded=payload["points_awarded"],
+                        attempt_id=payload.get("attempt_id"),
+                    )
                     output_json({"status": "success", "data": res})
 
                 elif op == "backup":

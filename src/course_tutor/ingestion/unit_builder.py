@@ -7,6 +7,22 @@ import uuid
 from ..models import KnowledgeUnit, UnitProvenance
 
 
+def extract_assumptions_from_text(text: str) -> List[str]:
+    """Detect natural language conditions and assumption clauses in text."""
+    assumptions = []
+    # Match patterns like: assumes P(B) > 0, assuming X is non-negative, provided that n >= 1
+    patterns = [
+        r"(?:assumes?|assuming|under the assumption that|provided that|subject to the condition that)\s+([^.\n;]+)",
+        r"(?:where|with)\s+([A-Za-z0-9_\(\)\|\s\>\<\=\\+\-]+>\s*0)",
+    ]
+    for pat in patterns:
+        for match in re.finditer(pat, text, re.IGNORECASE):
+            cond = match.group(1).strip()
+            if cond and len(cond) < 120 and cond not in assumptions:
+                assumptions.append(cond)
+    return assumptions
+
+
 def parse_structured_unit_blocks(
     text: str,
     course_id: str,
@@ -15,29 +31,52 @@ def parse_structured_unit_blocks(
     page_label: Optional[str] = None,
     slide_index: Optional[int] = None,
 ) -> List[tuple[KnowledgeUnit, UnitProvenance]]:
-    """Parse text for structured knowledge units, preserving assumptions, symbols, exceptions, and locators."""
+    """Parse text for structured knowledge units, preserving preambles, assumptions, symbols, exceptions, and locators.
+
+    Automatic segmentation preserves surrounding context and marks units as pending_review.
+    """
     units: List[tuple[KnowledgeUnit, UnitProvenance]] = []
 
-    # Patterns looking for explicit definitions/theorems/formulas
+    # Patterns looking for explicit definitions/theorems/formulas in English or Hebrew
     pattern = re.compile(
-        r"(?:###?\s*(Definition|Theorem|Formula|Method|Example|Table|Figure):\s*(.+?)\n)(.*?)(?=(?:\n###?\s*(?:Definition|Theorem|Formula|Method|Example|Table|Figure):|\Z))",
+        r"(?:###?\s*(Definition|Theorem|Formula|Method|Example|Table|Figure|הגדרה|משפט|נוסחה|שיטה|דוגמה|טבלה):\s*(.+?)\n)(.*?)(?=(?:\n###?\s*(?:Definition|Theorem|Formula|Method|Example|Table|Figure|הגדרה|משפט|נוסחה|שיטה|דוגמה|טבלה):|\Z))",
         re.DOTALL | re.IGNORECASE,
     )
 
     matches = list(pattern.finditer(text))
 
     if matches:
-        for m in matches:
+        last_end = 0
+        for i, m in enumerate(matches):
             kind_str = m.group(1).lower()
+            # Normalize Hebrew kinds
+            hebrew_kind_map = {
+                "משפט": "theorem",
+                "הגדרה": "definition",
+                "נוסחה": "formula",
+                "שיטה": "method",
+                "דוגמה": "example",
+                "טבלה": "table",
+            }
+            kind_str = hebrew_kind_map.get(kind_str, kind_str)
+
             title = m.group(2).strip()
             block_body = m.group(3).strip()
+
+            # Capture preceding preamble or interstitial text between units
+            preamble = text[last_end:m.start()].strip()
+            last_end = m.end()
 
             assumptions: List[str] = []
             symbol_defs: Dict[str, str] = {}
             exceptions: List[str] = []
             dependencies: List[str] = []
 
-            # Extract fields within block body
+            # 1. Check preamble for conditions/assumptions
+            if preamble:
+                assumptions.extend(extract_assumptions_from_text(preamble))
+
+            # 2. Extract explicit fields within block body
             lines = block_body.splitlines()
             content_lines: List[str] = []
 
@@ -67,9 +106,12 @@ def parse_structured_unit_blocks(
                 else:
                     content_lines.append(line)
 
-            content = "\n".join(content_lines).strip()
-            if not content:
-                content = block_body
+            inner_content = "\n".join(content_lines).strip() or block_body
+            # Combine preamble and inner content so context is preserved
+            if preamble:
+                content = f"{preamble}\n\n{inner_content}"
+            else:
+                content = inner_content
 
             unit_id = str(uuid.uuid4())
             ku = KnowledgeUnit(
@@ -83,7 +125,7 @@ def parse_structured_unit_blocks(
                 symbol_definitions=symbol_defs,
                 exceptions=exceptions,
                 dependencies=dependencies,
-                status="published",
+                status="pending_review",  # Automatic segmentation defaults to pending_review
             )
             prov = UnitProvenance(
                 id=str(uuid.uuid4()),
@@ -102,6 +144,8 @@ def parse_structured_unit_blocks(
             first_line = text.strip().splitlines()[0][:80].lstrip("#").strip()
             title = first_line or (page_label or f"Section {page_index or 0}")
             unit_id = str(uuid.uuid4())
+            assumptions = extract_assumptions_from_text(text.strip())
+
             ku = KnowledgeUnit(
                 id=unit_id,
                 course_id=course_id,
@@ -109,11 +153,11 @@ def parse_structured_unit_blocks(
                 title=title,
                 content=text.strip(),
                 summary=text.strip()[:200] + ("..." if len(text.strip()) > 200 else ""),
-                assumptions=[],
+                assumptions=assumptions,
                 symbol_definitions={},
                 exceptions=[],
                 dependencies=[],
-                status="published",
+                status="pending_review",
             )
             prov = UnitProvenance(
                 id=str(uuid.uuid4()),
@@ -150,7 +194,7 @@ def build_unit_from_dict(
         symbol_definitions=d.get("symbol_definitions", {}),
         exceptions=d.get("exceptions", []),
         dependencies=d.get("dependencies", []),
-        status=d.get("status", "published"),
+        status=d.get("status", "published"),  # Agent-submitted enrichment can declare published status
     )
     prov = UnitProvenance(
         id=str(uuid.uuid4()),
@@ -160,6 +204,6 @@ def build_unit_from_dict(
         page_label=d.get("page_label", page_label),
         slide_index=d.get("slide_index", slide_index),
         region_box=d.get("region_box"),
-        origin_type=d.get("origin_type", "extracted"),
+        origin_type=d.get("origin_type", "agent_enrichment"),
     )
     return ku, prov

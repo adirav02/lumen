@@ -14,6 +14,7 @@ from ..models import (
     Attempt,
     AttemptEvent,
     EvidenceRecord,
+    parse_bool,
     utc_now_iso,
 )
 from ..storage.db import atomic_transaction
@@ -130,6 +131,8 @@ class LearningService:
         """Commit evidence for observed subparts and recompute topic projections deterministically.
 
         Respects assistance ordering (F07), partial credit (F09), and untouched subparts (F08).
+        Ties each evaluation to a committed submission event and parses booleans strictly.
+        Rejects duplicate evaluation without correction to prevent score inflation.
         """
         with atomic_transaction(self.con):
             attempt = self.attempt_repo.get_attempt(attempt_id)
@@ -144,32 +147,66 @@ class LearningService:
                 subpart_key = ev_data.get("subpart_key", "default")
                 topic_id = ev_data["topic_id"]
                 skill_id = ev_data["skill_id"]
-                is_correct = bool(ev_data.get("correct", False))
-                is_partial = bool(ev_data.get("partial", False))
+
+                # Strict boolean parsing
+                try:
+                    is_correct = parse_bool(ev_data.get("correct", False))
+                    is_partial = parse_bool(ev_data.get("partial", False))
+                except ValueError as err:
+                    raise ValidationError(f"Invalid boolean in evaluation: {err}")
+
                 error_category = ev_data.get("error_category")
                 rationale = ev_data.get("rationale", "")
 
-                # Subpart-specific events
-                subpart_events = [e for e in all_events if e.subpart_key == subpart_key or not e.subpart_key]
+                # Tie evaluation to a specific committed submission event
+                submission_event = None
+                if "submission_event_id" in ev_data and ev_data["submission_event_id"]:
+                    submission_event = next((e for e in all_events if e.id == ev_data["submission_event_id"]), None)
+                    if not submission_event:
+                        raise ValidationError(f"Specified submission event '{ev_data['submission_event_id']}' not found in attempt.")
+                else:
+                    # Find last work_submission for this subpart or globally
+                    matching_submissions = [
+                        e for e in all_events
+                        if e.event_type == "work_submission" and (e.subpart_key == subpart_key or not e.subpart_key)
+                    ]
+                    if matching_submissions:
+                        submission_event = matching_submissions[-1]
+                    else:
+                        raise ValidationError(f"No committed work submission found for subpart '{subpart_key}' in attempt '{attempt_id}'.")
 
-                # F07, F09: strictly enforce demonstrated level
+                # Reject duplicate active evaluation for the same (subpart_key, skill_id, submission_event)
+                existing_active = [
+                    e for e in self.evidence_repo.list_evidence(attempt.course_id, attempt_id=attempt_id, status="active")
+                    if e.subpart_key == subpart_key and e.skill_id == skill_id and e.event_id == submission_event.id
+                ]
+                if existing_active:
+                    raise ValidationError(
+                        f"Active evidence already exists for attempt '{attempt_id}', subpart '{subpart_key}', skill '{skill_id}', event '{submission_event.id}'. "
+                        "Use correct_evidence to supersede or retract existing evaluation."
+                    )
+
+                # Assistance events MUST be prior to or at the submission event!
+                # Events after submission must NOT downgrade work submitted prior to assistance.
+                subpart_assistance_events = [
+                    e for e in all_events
+                    if (e.subpart_key == subpart_key or not e.subpart_key)
+                    and e.event_index <= submission_event.event_index
+                ]
+
                 has_arithmetic_only = (error_category == "arithmetic" and is_partial)
                 demonstrated_level = determine_demonstrated_level(
                     submitted_correct=is_correct,
-                    events_for_subpart=subpart_events,
+                    events_for_subpart=subpart_assistance_events,
                     is_partial_progress=is_partial,
                     has_arithmetic_error_only=has_arithmetic_only,
                 )
-
-                # Link to last submission event for this subpart
-                work_events = [e for e in subpart_events if e.event_type == "work_submission"]
-                last_event_id = work_events[-1].id if work_events else (all_events[-1].id if all_events else None)
 
                 ev_rec = EvidenceRecord(
                     id=str(uuid.uuid4()),
                     course_id=attempt.course_id,
                     attempt_id=attempt.id,
-                    event_id=last_event_id,
+                    event_id=submission_event.id,
                     exercise_version_id=attempt.exercise_version_id,
                     topic_id=topic_id,
                     skill_id=skill_id,
@@ -209,6 +246,7 @@ class LearningService:
         """Retract or supersede evidence when tutor or rubric was wrong (F11).
 
         Maintains full audit trail while recomputing active topic states deterministically.
+        Ensures tutor corrections cannot bypass assistance history.
         """
         with atomic_transaction(self.con):
             old_ev = self.evidence_repo.get_evidence(evidence_id)
@@ -216,6 +254,19 @@ class LearningService:
                 raise ValidationError(f"Evidence record '{evidence_id}' not found.")
 
             if replacement:
+                rep_level = replacement.get("demonstrated_level")
+                if rep_level == "independent_mastery":
+                    attempt_events = self.attempt_repo.list_events(old_ev.attempt_id)
+                    sub_event = next((e for e in attempt_events if e.id == old_ev.event_id), None)
+                    max_idx = sub_event.event_index if sub_event else float("inf")
+                    prior_events = [
+                        e for e in attempt_events
+                        if (e.subpart_key == old_ev.subpart_key or not e.subpart_key) and e.event_index <= max_idx
+                    ]
+                    has_solution = any(e.event_type == "solution_revealed" for e in prior_events)
+                    if has_solution:
+                        raise ValidationError("Cannot assign 'independent_mastery' via correction when solution was revealed before submission.")
+
                 new_rec = EvidenceRecord(
                     id=str(uuid.uuid4()),
                     course_id=old_ev.course_id,
@@ -252,3 +303,4 @@ class LearningService:
                 "resulting_evidence": resulting_ev.to_dict(),
                 "recomputed_topic_states": recomputed_states,
             }
+

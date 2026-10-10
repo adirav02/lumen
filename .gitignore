@@ -38,11 +38,11 @@ htmlcov/
 *.db-journal
 *.db-wal
 *.db-shm
-.lumen/
-storage/
-data/
-backups/
-scratch/
+/.lumen/
+/storage/
+/data/
+/backups/
+/scratch/
 
 # OS and IDE files
 .DS_Store

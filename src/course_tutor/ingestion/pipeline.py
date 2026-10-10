@@ -3,9 +3,10 @@
 from pathlib import Path
 import sqlite3
 from typing import Any, Dict, List, Optional, Union
+import uuid
 
 from ..errors import CourseNotFoundError, WorkspaceError
-from ..models import KnowledgeUnit, UnitProvenance
+from ..models import KnowledgeUnit, SourceSection, UnitProvenance
 from ..storage.db import atomic_transaction
 from ..storage.file_store import FileStore
 from ..storage.repositories import (
@@ -36,7 +37,11 @@ class IngestionPipeline:
         structured_units: Optional[List[Dict[str, Any]]] = None,
         topic_slugs: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """Ingest a file into course: stages bytes, creates source version, extracts units."""
+        """Ingest a file into course: stages bytes, creates source version, extracts units.
+        
+        Extraction and file staging occur outside database transactions to avoid
+        holding SQLite transaction locks during long-running I/O or parsing operations.
+        """
         course = self.course_repo.get_course(course_id)
         if not course:
             raise CourseNotFoundError(course_id)
@@ -48,14 +53,33 @@ class IngestionPipeline:
         orig_filename = src_path.name
         log_name = logical_name or orig_filename
 
+        # 1. Stage and store original file byte-for-byte outside DB transaction
+        stored = self.file_store.store_file(src_path, original_filename=orig_filename)
+
+        # 2. Extract content using format extractor outside DB transaction
+        extractor = get_extractor(src_path)
+        sections = extractor.extract(src_path)
+
+        quality_flags = {sec.quality_flag for sec in sections}
+        limitations = [sec.notes for sec in sections if sec.notes]
+
+        # F01: if scanned or uncertain, mark explicit status
+        if "uncertain_scanned" in quality_flags:
+            extraction_status = "uncertain"
+            status_notes = "; ".join(limitations) or "Contains scanned pages with uncertain or missing text layer."
+        elif "empty" in quality_flags and len(sections) == 1:
+            extraction_status = "empty"
+            status_notes = "No extractable text found."
+        else:
+            extraction_status = "extracted"
+            status_notes = ""
+
+        # 3. Fast atomic transaction for database metadata and unit persistence
         with atomic_transaction(self.con):
-            # 1. Register logical source
+            # Register logical source
             source = self.source_repo.get_or_create_source(course_id, log_name, role=role)
 
-            # 2. Stage and store original file byte-for-byte
-            stored = self.file_store.store_file(src_path, original_filename=orig_filename)
-
-            # 3. Check for identical content already in course (F05: content identity)
+            # Check for identical content already in course (F05: content identity)
             existing_ver = self.source_repo.find_version_by_hash(course_id, stored.file_hash)
             if existing_ver and existing_ver.source_id == source.id:
                 # Same source and exact same content uploaded again: return existing without reprocessing
@@ -70,7 +94,7 @@ class IngestionPipeline:
                     "limitations": [existing_ver.extraction_notes] if existing_ver.extraction_notes else [],
                 }
 
-            # 4. Create new version record (F06: new version on different bytes or new source)
+            # Create new version record (F06: new version on different bytes or new source)
             source_version = self.source_repo.add_source_version(
                 source_id=source.id,
                 course_id=course_id,
@@ -79,30 +103,26 @@ class IngestionPipeline:
                 mime_type=stored.mime_type,
                 byte_size=stored.byte_size,
                 storage_relpath=stored.storage_relpath,
-                extraction_status="in_progress",
+                extraction_status=extraction_status,
+                extraction_notes=status_notes,
             )
 
-            # 5. Extract content using appropriate format extractor
-            extractor = get_extractor(src_path)
-            sections = extractor.extract(src_path)
+            # Persist raw extracted sections with locators for complete traceability
+            for idx, sec in enumerate(sections):
+                source_sec = SourceSection(
+                    id=str(uuid.uuid4()),
+                    source_version_id=source_version.id,
+                    course_id=course_id,
+                    section_index=idx,
+                    label=sec.label,
+                    text=sec.text,
+                    quality_flag=sec.quality_flag,
+                    notes=sec.notes,
+                    metadata=sec.metadata,
+                )
+                self.source_repo.add_source_section(source_sec)
 
-            quality_flags = {sec.quality_flag for sec in sections}
-            limitations = [sec.notes for sec in sections if sec.notes]
-
-            # F01: if scanned or uncertain, mark explicit status
-            if "uncertain_scanned" in quality_flags:
-                extraction_status = "uncertain"
-                status_notes = "; ".join(limitations) or "Contains scanned pages with uncertain or missing text layer."
-            elif "empty" in quality_flags and len(sections) == 1:
-                extraction_status = "empty"
-                status_notes = "No extractable text found."
-            else:
-                extraction_status = "extracted"
-                status_notes = ""
-
-            self.source_repo.update_extraction_status(source_version.id, extraction_status, status_notes)
-
-            # 6. Map / resolve topics
+            # Map / resolve topics
             topic_ids: List[str] = []
             if topic_slugs:
                 for slug in topic_slugs:
@@ -110,7 +130,7 @@ class IngestionPipeline:
                     if t:
                         topic_ids.append(t.id)
 
-            # 7. Create semantic knowledge units
+            # Create semantic knowledge units
             created_units: List[KnowledgeUnit] = []
 
             if structured_units:
@@ -145,3 +165,50 @@ class IngestionPipeline:
             "extraction_status": extraction_status,
             "limitations": limitations,
         }
+
+    def enrich_source_version(
+        self,
+        source_version_id: str,
+        structured_units: List[Dict[str, Any]],
+        publish: bool = True,
+        topic_slugs: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Allows an agent or user to enrich raw extractions into structured knowledge units.
+        
+        Units created through enrichment can be set directly to 'published' (default)
+        or left as 'pending_review' if review is required.
+        """
+        ver = self.source_repo.get_source_version(source_version_id)
+        if not ver:
+            raise ValueError(f"Source version not found: {source_version_id}")
+        course_id = ver.course_id
+
+        with atomic_transaction(self.con):
+            topic_ids: List[str] = []
+            if topic_slugs:
+                for slug in topic_slugs:
+                    t = self.topic_repo.get_topic_by_slug(course_id, slug)
+                    if t:
+                        topic_ids.append(t.id)
+
+            created_units: List[KnowledgeUnit] = []
+            for u_dict in structured_units:
+                u_dict_copy = dict(u_dict)
+                if publish and "status" not in u_dict_copy:
+                    u_dict_copy["status"] = "published"
+                ku, prov = build_unit_from_dict(u_dict_copy, course_id, source_version_id)
+                self.knowledge_repo.create_unit(ku, [prov], topic_ids)
+                created_units.append(ku)
+
+            return {
+                "status": "success",
+                "source_version_id": source_version_id,
+                "course_id": course_id,
+                "units_created_count": len(created_units),
+                "units": [u.to_dict() for u in created_units],
+            }
+
+    def get_extracted_sections(self, source_version_id: str) -> List[Dict[str, Any]]:
+        """Retrieve raw persisted extracted sections for a source version."""
+        sections = self.source_repo.list_source_sections(source_version_id)
+        return [s.to_dict() for s in sections]

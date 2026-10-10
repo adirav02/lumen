@@ -175,3 +175,117 @@ def test_f23_course_brief_exposes_missing_syllabus_content(temp_workspace):
         assert "Combinatorics" not in missing
     finally:
         core.close()
+
+
+def test_preamble_preservation_and_pending_review_default(temp_workspace):
+    """Verify that heading preambles with conditions are preserved, assumptions parsed, and units default to pending_review."""
+    core = LumenCore(temp_workspace)
+    try:
+        core.create_course("Probability", course_id="prob-preamble")
+        doc = (
+            "The following theorem assumes P(B) > 0 and a discrete sample space.\n"
+            "### Theorem: Bayes Rule\n"
+            "P(A|B) = P(B|A) * P(A) / P(B)\n"
+        )
+        f = temp_workspace / "bayes_preamble.txt"
+        f.write_text(doc, encoding="utf-8")
+        res = core.ingest_source("prob-preamble", f, logical_name="bayes_notes")["data"]
+
+        assert res["units_created_count"] == 1
+        unit = res["units"][0]
+
+        # Preamble must NOT be dropped
+        assert "The following theorem assumes P(B) > 0" in unit["content"]
+        # Assumptions must be extracted from the preamble
+        assert any("P(B) > 0" in a for a in unit["assumptions"])
+        # Status must default to pending_review, NOT published
+        assert unit["status"] == "pending_review"
+    finally:
+        core.close()
+
+
+def test_raw_sections_persistence_and_enrichment_workflow(temp_workspace):
+    """Verify raw source_sections are persisted and agent can enrich them into published units."""
+    core = LumenCore(temp_workspace)
+    try:
+        core.create_course("Probability", course_id="prob-enrich")
+        doc = (
+            "# Module 1\n"
+            "Some background context on probability.\n"
+            "## Section 1: Axioms\n"
+            "Kolmogorov axioms of probability:\n"
+            "1. Non-negativity: P(E) >= 0\n"
+            "2. Normalization: P(Omega) = 1\n"
+            "3. Additivity: P(E1 U E2 ...) = sum P(Ei)\n"
+        )
+        f = temp_workspace / "axioms.txt"
+        f.write_text(doc, encoding="utf-8")
+        res = core.ingest_source("prob-enrich", f, logical_name="axioms")["data"]
+        ver_id = res["source_version_id"]
+
+        # Raw sections persisted with locators
+        sections = core.get_extracted_sections(ver_id)
+        assert len(sections) >= 2
+        assert any("Kolmogorov axioms" in s["text"] for s in sections)
+
+        # Agent reads sections and enriches them into verified units
+        enriched = core.enrich_source_version(
+            source_version_id=ver_id,
+            structured_units=[{
+                "kind": "definition",
+                "title": "Kolmogorov Axioms",
+                "content": "P(E) >= 0; P(Omega) = 1; countable additivity.",
+                "assumptions": ["Measurable space (Omega, F)"],
+                "symbol_definitions": {"Omega": "Sample space", "E": "Event"},
+            }],
+            publish=True,
+        )
+        assert enriched["status"] == "success"
+        assert enriched["units_created_count"] == 1
+        assert enriched["units"][0]["status"] == "published"
+        assert enriched["units"][0]["title"] == "Kolmogorov Axioms"
+
+        # Search finds the enriched published unit
+        search_hits = core.search("prob-enrich", "Kolmogorov Axioms")
+        assert search_hits["results_count"] >= 1
+    finally:
+        core.close()
+
+
+def test_realistic_pdf_pptx_hebrew_fixtures_ingestion(temp_workspace):
+    """Verify ingestion of realistic PDF, PPTX, and Hebrew fixtures with full provenance."""
+    core = LumenCore(temp_workspace)
+    try:
+        core.create_course("Advanced Probability", course_id="adv-prob")
+        fixtures_dir = Path(__file__).parent.parent / "examples" / "synthetic_probability" / "materials"
+
+        # 1. Realistic PDF with preamble and conditions
+        pdf_file = fixtures_dir / "sample_lecture.pdf"
+        assert pdf_file.is_file(), f"Missing fixture {pdf_file}"
+        res_pdf = core.ingest_source("adv-prob", pdf_file, logical_name="lecture_pdf")["data"]
+        assert res_pdf["sections_extracted"] >= 1
+        assert res_pdf["units_created_count"] >= 1
+        # Check condition preserved in PDF unit
+        pdf_unit = res_pdf["units"][0]
+        assert "P(B) > 0" in pdf_unit["content"]
+        assert pdf_unit["status"] == "pending_review"
+
+        # 2. Realistic PPTX with multiple slide shapes
+        pptx_file = fixtures_dir / "sample_slides.pptx"
+        assert pptx_file.is_file(), f"Missing fixture {pptx_file}"
+        res_pptx = core.ingest_source("adv-prob", pptx_file, logical_name="slides_pptx")["data"]
+        assert res_pptx["sections_extracted"] >= 1
+
+        # 3. Realistic Hebrew materials
+        heb_file = fixtures_dir / "hebrew_sample.txt"
+        assert heb_file.is_file(), f"Missing fixture {heb_file}"
+        res_heb = core.ingest_source("adv-prob", heb_file, logical_name="hebrew_notes")["data"]
+        assert res_heb["sections_extracted"] >= 1
+        assert res_heb["units_created_count"] >= 1
+
+        # Hebrew search matches
+        search_res = core.search("adv-prob", "בייס")
+        assert search_res["results_count"] >= 1
+        assert any("בייס" in r["title"] or "בייס" in r["snippet"] for r in search_res["results"])
+    finally:
+        core.close()

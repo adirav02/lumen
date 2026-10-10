@@ -13,6 +13,7 @@ from ..storage.repositories import (
     ExerciseRepository,
     TopicRepository,
 )
+from ..learning.service import LearningService
 
 
 class DiagnosticService:
@@ -23,6 +24,7 @@ class DiagnosticService:
         self.exercise_repo = ExerciseRepository(con)
         self.evidence_repo = EvidenceRepository(con)
         self.topic_repo = TopicRepository(con)
+        self.learning_service = LearningService(con)
 
     def create_assessment(
         self,
@@ -84,6 +86,79 @@ class DiagnosticService:
             "status": "open",
         }
 
+    def start_assessment_item_attempt(
+        self,
+        assessment_id: str,
+        item_order: int,
+        learner_id: str = "default_learner",
+    ) -> Dict[str, Any]:
+        """Start a diagnostic attempt for a specific item in the assessment and link them."""
+        assessment = self.assessment_repo.get_assessment(assessment_id)
+        if not assessment:
+            raise ValidationError(f"Assessment '{assessment_id}' not found.")
+
+        item = self.assessment_repo.get_item_by_order(assessment_id, item_order)
+        if not item:
+            raise ValidationError(f"Item {item_order} not found in assessment '{assessment_id}'.")
+
+        # Start attempt in diagnostic mode
+        attempt = self.learning_service.start_attempt(
+            course_id=assessment.course_id,
+            exercise_version_id=item.exercise_version_id,
+            learner_id=learner_id,
+            mode="diagnostic",
+        )
+
+        # Link attempt to assessment item
+        self.assessment_repo.update_item_progress(item.id, attempt_id=attempt.id)
+
+        return {
+            "assessment_id": assessment_id,
+            "item_order": item_order,
+            "attempt": attempt.to_dict(),
+        }
+
+    def record_assessment_item_score(
+        self,
+        assessment_id: str,
+        item_order: int,
+        points_awarded: float,
+        attempt_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Record rubric score for an assessment item without penalizing unattempted items as failures."""
+        assessment = self.assessment_repo.get_assessment(assessment_id)
+        if not assessment:
+            raise ValidationError(f"Assessment '{assessment_id}' not found.")
+
+        item = self.assessment_repo.get_item_by_order(assessment_id, item_order)
+        if not item:
+            raise ValidationError(f"Item {item_order} not found in assessment '{assessment_id}'.")
+
+        if points_awarded < 0 or points_awarded > item.max_points:
+            raise ValidationError(
+                f"Points awarded {points_awarded} out of valid range [0, {item.max_points}]."
+            )
+
+        linked_attempt_id = attempt_id or item.attempt_id
+        self.assessment_repo.update_item_progress(
+            item.id,
+            attempt_id=linked_attempt_id,
+            points_awarded=points_awarded,
+        )
+
+        # Check if all items are completed
+        all_items = self.assessment_repo.get_items(assessment_id)
+        if all(it.points_awarded is not None or it.id == item.id for it in all_items):
+            self.assessment_repo.update_assessment_status(assessment_id, "completed")
+
+        return {
+            "assessment_id": assessment_id,
+            "item_order": item_order,
+            "points_awarded": points_awarded,
+            "max_points": item.max_points,
+            "attempt_id": linked_attempt_id,
+        }
+
     def _get_family_exposure(self, course_id: str, exercise_family: str) -> int:
         """Count how many attempts have occurred for this exercise family in the course."""
         row = self.con.execute(
@@ -99,15 +174,22 @@ class DiagnosticService:
         return int(row["cnt"]) if row else 0
 
     def get_progress(self, assessment_id: str) -> Dict[str, Any]:
-        """Compute transparent progress report distinguishing observed score, coverage, and assistance."""
+        """Compute transparent progress report distinguishing observed score, coverage, and assistance.
+        
+        Reports transparent denominators without penalizing unattempted items as failures.
+        """
         assessment = self.assessment_repo.get_assessment(assessment_id)
         if not assessment:
             raise ValidationError(f"Assessment '{assessment_id}' not found.")
 
         items = self.assessment_repo.get_items(assessment_id)
         total_items = len(items)
-        completed_items = sum(1 for it in items if it.points_awarded is not None)
+        items_scored = sum(1 for it in items if it.points_awarded is not None)
+        items_attempted = sum(1 for it in items if it.points_awarded is not None or it.attempt_id is not None)
+        items_unattempted = total_items - items_attempted
+
         total_possible_points = sum(it.max_points for it in items)
+        attempted_possible_points = sum(it.max_points for it in items if it.points_awarded is not None)
         total_awarded_points = sum(it.points_awarded for it in items if it.points_awarded is not None)
 
         blueprint = assessment.blueprint
@@ -149,6 +231,7 @@ class DiagnosticService:
             items_summary.append({
                 "item_order": it.item_order,
                 "exercise_version_id": it.exercise_version_id,
+                "attempt_id": it.attempt_id,
                 "question_preview": ex_ver.question_text[:80] if ex_ver else "",
                 "max_points": it.max_points,
                 "points_awarded": it.points_awarded,
@@ -156,20 +239,35 @@ class DiagnosticService:
                 "prior_exposure_count": it.exposure_count,
             })
 
+        # Observed percentage is computed strictly on attempted/scored items to avoid treating unattempted items as failures
+        observed_percentage = (
+            round((total_awarded_points / attempted_possible_points * 100), 1)
+            if attempted_possible_points > 0
+            else 0.0
+        )
+        completion_percentage = (
+            round((items_scored / total_items * 100), 1)
+            if total_items > 0
+            else 0.0
+        )
+
         return {
             "assessment_id": assessment_id,
             "title": assessment.title,
             "status": assessment.status,
             "total_items": total_items,
-            "completed_items": completed_items,
-            "completion_percentage": round((completed_items / total_items * 100), 1) if total_items > 0 else 0.0,
+            "completed_items": items_scored,
+            "items_attempted": items_attempted,
+            "items_unattempted": items_unattempted,
             "total_possible_points": total_possible_points,
+            "attempted_possible_points": attempted_possible_points,
             "total_awarded_points": total_awarded_points,
-            "observed_percentage": round((total_awarded_points / total_possible_points * 100), 1) if total_possible_points > 0 else 0.0,
+            "observed_percentage": observed_percentage,
+            "completion_percentage": completion_percentage,
             "topic_coverage": topic_coverage,
             "items": items_summary,
             "caveats": [
-                "Score reflects observed rubric points only; not an exam pass probability.",
-                "Unassessed topics and untouched subparts are reported as unassessed.",
+                "Score reflects observed rubric points on attempted items; not an exam pass probability.",
+                "Unattempted items and untested topics are reported as unassessed rather than penalized as failures.",
             ],
         }

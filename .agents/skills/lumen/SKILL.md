@@ -49,20 +49,27 @@ lumen start-attempt -c "<course_id>" -j '{"exercise_version_id": "<ex_ver_id>", 
 # 8. Record attempt events (submissions, hints, solutions)
 lumen record-attempt-event -j '{"attempt_id": "<att_id>", "expected_revision": 1, "event_type": "work_submission", "content": "P(A|B) = 0.4"}'
 
-# 9. Commit evaluated evidence
+# 9. Commit evaluated evidence (tied to committed work submission)
 lumen commit-evidence -j '{"attempt_id": "<att_id>", "evaluations": [{"subpart_key": "a", "topic_id": "<topic_id>", "skill_id": "bayes_application", "correct": true}]}'
 
 # 10. Pause or resume an attempt
 lumen pause-attempt -j '{"attempt_id": "<att_id>", "expected_revision": 2}'
 lumen resume-attempt -j '{"attempt_id": "<att_id>", "expected_revision": 3}'
 
-# 11. Run diagnostics
+# 11. Semantic enrichment of extracted sections
+lumen get-extracted-sections -j '{"source_version_id": "<ver_id>"}'
+lumen enrich-source-version -j '{"source_version_id": "<ver_id>", "structured_units": [...], "publish": true}'
+lumen validate-exercise-version -j '{"version_id": "<ex_ver_id>", "validation_state": "validated"}'
+
+# 12. Run diagnostics & item-level assessments
 lumen create-assessment -c "<course_id>" -j '{"title": "Midterm Diagnostic", "blueprint": {"topic_ids": ["<topic_id>"]}}'
+lumen start-assessment-item-attempt -j '{"assessment_id": "<assessment_id>", "item_order": 1}'
+lumen record-assessment-item-score -j '{"assessment_id": "<assessment_id>", "item_order": 1, "points_awarded": 9.0}'
 lumen assessment-progress -j '{"assessment_id": "<assessment_id>"}'
 
-# 12. Backup and restore
+# 13. Backup and restore (with populated workspace protection)
 lumen backup -j '{"output_path": "backups/lumen_backup.zip"}'
-lumen restore -j '{"backup_path": "backups/lumen_backup.zip", "target_workspace": "restored_ws"}'
+lumen restore -j '{"backup_path": "backups/lumen_backup.zip", "target_workspace": "restored_ws", "force": false}'
 ```
 
 ## Tutoring Workflow

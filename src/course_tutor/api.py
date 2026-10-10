@@ -24,12 +24,13 @@ from .models import (
 )
 from .retrieval.read import read_source_region, read_units
 from .retrieval.search import SearchService
-from .storage.db import get_connection
+from .storage.db import atomic_transaction, get_connection
 from .storage.file_store import FileStore
 from .storage.migrations import run_migrations
 from .storage.repositories import (
     CourseRepository,
     ExerciseRepository,
+    KnowledgeRepository,
     ReceiptRepository,
     TopicRepository,
 )
@@ -51,6 +52,7 @@ class LumenCore:
         self.receipt_repo = ReceiptRepository(self.con)
         self.course_repo = CourseRepository(self.con)
         self.topic_repo = TopicRepository(self.con)
+        self.knowledge_repo = KnowledgeRepository(self.con)
         self.exercise_repo = ExerciseRepository(self.con)
         self.ingestion = IngestionPipeline(self.con, self.file_store)
         self.search_service = SearchService(self.con)
@@ -86,24 +88,26 @@ class LumenCore:
                 "data": prior_receipt.response_data,
             }
 
-        # Execute operation
-        data = func()
+        # Atomically commit mutation and receipt in the same database transaction
+        with atomic_transaction(self.con):
+            data = func()
 
-        affected_ids = []
-        if isinstance(data, dict):
-            for k in ("course_id", "source_version_id", "attempt_id", "evidence_id", "assessment_id"):
-                if k in data and data[k]:
-                    affected_ids.append(str(data[k]))
+            affected_ids = []
+            if isinstance(data, dict):
+                for k in ("course_id", "source_version_id", "attempt_id", "evidence_id", "assessment_id"):
+                    if k in data and data[k]:
+                        affected_ids.append(str(data[k]))
 
-        receipt = OperationReceipt(
-            request_id=request_id,
-            course_id=course_id,
-            canonical_request_hash=canon_hash,
-            operation_name=operation_name,
-            affected_ids=affected_ids,
-            response_data=data if isinstance(data, dict) else {"result": data},
-        )
-        self.receipt_repo.record_receipt(receipt)
+            cid = course_id or (data.get("course_id") if isinstance(data, dict) else None)
+            receipt = OperationReceipt(
+                request_id=request_id,
+                course_id=cid,
+                canonical_request_hash=canon_hash,
+                operation_name=operation_name,
+                affected_ids=affected_ids,
+                response_data=data if isinstance(data, dict) else {"result": data},
+            )
+            self.receipt_repo.record_receipt(receipt)
 
         return {
             "status": "success",
@@ -125,16 +129,16 @@ class LumenCore:
         notation_settings: Optional[Dict[str, Any]] = None,
         request_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        cid = course_id or str(uuid.uuid4())
         params = {
             "name": name,
-            "course_id": cid,
+            "course_id": course_id,
             "scope": scope,
             "default_language": default_language,
             "notation_settings": notation_settings or {},
         }
 
         def _do():
+            cid = course_id or str(uuid.uuid4())
             course = Course(
                 id=cid,
                 name=name,
@@ -145,7 +149,7 @@ class LumenCore:
             self.course_repo.create_course(course)
             return course.to_dict()
 
-        return self._execute_idempotent(request_id, "create_course", cid, params, _do)
+        return self._execute_idempotent(request_id, "create_course", course_id, params, _do)
 
     # 3. Source Ingestion
     def ingest_source(
@@ -158,13 +162,19 @@ class LumenCore:
         topic_slugs: Optional[List[str]] = None,
         request_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        file_p = Path(file_path).resolve()
+        file_sha256 = ""
+        if file_p.is_file():
+            import hashlib
+            file_sha256 = hashlib.sha256(file_p.read_bytes()).hexdigest()
+
         params = {
             "course_id": course_id,
-            "file_path": str(file_path),
-            "logical_name": logical_name,
+            "file_sha256": file_sha256,
+            "logical_name": logical_name or (file_p.name if file_p.is_file() else str(file_path)),
             "role": role,
-            "topic_slugs": topic_slugs or [],
-            "units_count": len(structured_units) if structured_units else 0,
+            "structured_units": structured_units or [],
+            "topic_slugs": sorted(topic_slugs or []),
         }
 
         def _do():
@@ -178,6 +188,23 @@ class LumenCore:
             )
 
         return self._execute_idempotent(request_id, "ingest_source", course_id, params, _do)
+
+    def get_extracted_sections(self, source_version_id: str) -> List[Dict[str, Any]]:
+        return self.ingestion.get_extracted_sections(source_version_id)
+
+    def enrich_source_version(
+        self,
+        source_version_id: str,
+        structured_units: List[Dict[str, Any]],
+        publish: bool = True,
+        topic_slugs: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        return self.ingestion.enrich_source_version(
+            source_version_id=source_version_id,
+            structured_units=structured_units,
+            publish=publish,
+            topic_slugs=topic_slugs,
+        )
 
     # 4. Course Brief
     def course_brief(self, course_id: str, learner_id: str = "default_learner") -> Dict[str, Any]:
@@ -450,13 +477,53 @@ class LumenCore:
 
         return self._execute_idempotent(request_id, "create_assessment", course_id, params, _do)
 
+    def validate_exercise_version(
+        self,
+        version_id: str,
+        validation_state: str = "validated",
+        notes: str = "",
+    ) -> Dict[str, Any]:
+        ver = self.exercise_repo.validate_exercise_version(version_id, validation_state, notes)
+        return ver.to_dict()
+
     def assessment_progress(self, assessment_id: str) -> Dict[str, Any]:
         return self.diagnostic_service.get_progress(assessment_id)
+
+    def start_assessment_item_attempt(
+        self,
+        assessment_id: str,
+        item_order: int,
+        learner_id: str = "default_learner",
+    ) -> Dict[str, Any]:
+        return self.diagnostic_service.start_assessment_item_attempt(
+            assessment_id=assessment_id,
+            item_order=item_order,
+            learner_id=learner_id,
+        )
+
+    def record_assessment_item_score(
+        self,
+        assessment_id: str,
+        item_order: int,
+        points_awarded: float,
+        attempt_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return self.diagnostic_service.record_assessment_item_score(
+            assessment_id=assessment_id,
+            item_order=item_order,
+            points_awarded=points_awarded,
+            attempt_id=attempt_id,
+        )
 
     # 10. Backup and Restore
     def backup(self, output_path: Union[str, Path]) -> Dict[str, Any]:
         return backup_workspace(self.workspace_root, output_path, con=self.con)
 
     @classmethod
-    def restore(cls, backup_path: Union[str, Path], target_workspace: Union[str, Path]) -> Dict[str, Any]:
-        return restore_workspace(backup_path, target_workspace)
+    def restore(
+        cls,
+        backup_path: Union[str, Path],
+        target_workspace: Union[str, Path],
+        force: bool = False,
+    ) -> Dict[str, Any]:
+        return restore_workspace(backup_path, target_workspace, force=force)
