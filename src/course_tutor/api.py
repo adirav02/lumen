@@ -797,6 +797,16 @@ class LumenCore:
         self._verify_not_detached()
         return QuestionCatalog(self.con).list_questions(course_id, source_version_id, limit, after_id)
 
+    def student_preview(self, course_id, exercise_version_id):
+        self._verify_not_detached()
+        from .student import student_preview
+        return student_preview(self.con, course_id, exercise_version_id)
+
+    def student_search(self, course_id, query, limit=20):
+        self._verify_not_detached()
+        from .student import student_search
+        return student_search(self.con, course_id, query, limit)
+
     def search_questions(self, course_id, query, limit=20):
         self._verify_not_detached()
         return QuestionCatalog(self.con).search_questions(course_id, query, limit)

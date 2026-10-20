@@ -71,6 +71,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument("--query", "-q", help="Search query")
     parser.add_argument("--request-id", "-r", help="Stable request ID for idempotent mutations")
 
+    parser.add_argument("--audience", choices=("tutor", "student"), default="tutor")
     args = parser.parse_args(argv)
 
     try:
@@ -84,6 +85,9 @@ def main(argv: Optional[List[str]] = None) -> None:
         }, exit_code=1)
 
     op = args.operation.lower().replace("-", "_")
+    if args.audience == 'student' and op not in {'student_preview', 'student_search', 'assessment_paper', 'export_assessment', 'capabilities'}:
+        output_json({'status': 'error', 'error_code': 'TUTOR_ONLY',
+                     'message': 'This command is tutor-only; use student-search or student-preview.'}, exit_code=1)
     ws_path = Path(args.workspace).resolve()
     if op == "assemble_exam":
         try:
@@ -348,7 +352,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                     params = {k: v for k, v in payload.items() if k not in {"course_id", "request_id"}}
                     output_operation_result(getattr(core, op)(course_id=cid, request_id=req_id, **params))
 
-                elif op in {"list_questions", "exam_catalog_status", "list_question_relations", "question_history", "attempt_history", "search_questions"}:
+                elif op in {"list_questions", "exam_catalog_status", "list_question_relations", "question_history", "attempt_history", "search_questions", "student_search", "student_preview"}:
                     params = {k: v for k, v in payload.items() if k not in {"course_id", "request_id"}}
                     output_json({"status": "success", "data": getattr(core, op)(course_id=cid, **params)})
 

@@ -3,6 +3,7 @@
 import json
 
 from ..errors import ValidationError
+from ..student import student_paper
 from ..models import compute_exercise_version_hash
 from ..storage.repositories import AssemblyRepository, AssessmentRepository, ExerciseRepository
 
@@ -40,8 +41,8 @@ def assembly_paper(con, job):
             'max_points': item['max_points']})
     if not questions:
         raise ValidationError('Assessment contains no selected questions.')
-    return {'assessment_id': job['assessment_id'], 'course_id': job['course_id'],
-            'title': job['generation'].get('title') or 'Exam', 'questions': questions}
+    return student_paper({'assessment_id': job['assessment_id'], 'course_id': job['course_id'],
+            'title': job['generation'].get('title') or 'Exam', 'questions': questions})
 
 
 def assessment_paper(con, assessment_id, course_id=None):
@@ -82,5 +83,5 @@ def assessment_paper(con, assessment_id, course_id=None):
         })
     if not questions:
         raise ValidationError('Assessment contains no selected questions.')
-    return {'assessment_id': assessment.id, 'course_id': assessment.course_id,
-            'title': assessment.title, 'questions': sorted(questions, key=lambda q:q['item_order'])}
+    return student_paper({'assessment_id': assessment.id, 'course_id': assessment.course_id,
+            'title': assessment.title, 'questions': sorted(questions, key=lambda q:q['item_order'])})

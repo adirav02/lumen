@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 
 from ..errors import ValidationError
+from ..student import student_paper
 
 
 MATH = re.compile(r'\\\((.+?)\\\)|\\\[(.+?)\\\]|\$\$(.+?)\$\$|(?<!\\)\$([^$\n]+)\$|((?:\([^()\s]+\)|[A-Za-z][A-Za-z0-9]*)(?:[_^]\{[^{}\n]+\})+)', re.S)
@@ -98,6 +99,7 @@ def render_question_text(text):
     return ''.join(parts)
 
 def render_paper_html(paper):
+    paper = student_paper(paper)
     text = '\n'.join(q['question_text'] for q in paper['questions'])
     hebrew = len(re.findall(r'[\u0590-\u05ff]', text))
     arabic = len(re.findall(r'[\u0600-\u06ff]', text))
