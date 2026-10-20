@@ -90,6 +90,13 @@ def test_host_discovery_and_loader_integrity():
 # 2. Host Capability Detection Across Environments
 # ==============================================================================
 
+@pytest.fixture(autouse=True)
+def isolate_additional_host_declarations(monkeypatch):
+    # These tests deliberately simulate host markers, independently of the live host.
+    monkeypatch.delenv('LUMEN_HOST', raising=False)
+    monkeypatch.delenv('CODEX_THREAD_ID', raising=False)
+
+
 def test_host_environment_detection_capabilities(monkeypatch):
     """Verify capabilities reporter correctly detects host from environment markers."""
     # Antigravity marker

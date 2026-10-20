@@ -10,11 +10,11 @@ import tempfile
 from contextlib import closing
 from typing import Any, Dict, Optional, Union
 
-from .assessment.export import browser_executable
+from .host import detect_host
 
 
 
-def check_capabilities(workspace_path: Optional[Union[str, Path]] = None) -> Dict[str, Any]:
+def check_capabilities(workspace_path: Optional[Union[str, Path]] = None, host: Optional[str] = None) -> Dict[str, Any]:
     """Inspect and report host runtime, SQLite features, storage, and format extraction capabilities."""
     ws_writable = False
     ws_str = str(workspace_path) if workspace_path else None
@@ -59,27 +59,32 @@ def check_capabilities(workspace_path: Optional[Union[str, Path]] = None) -> Dic
         except Exception as exc:
             render_error = f'{type(exc).__name__}: {exc}'
 
-    # Detect current host from environment
-    detected_host = "generic_cli"
-    if "CLAUDE_CODE" in os.environ or "ANTHROPIC" in os.environ:
-        detected_host = "claude_code"
-    elif "CODEX" in os.environ or "OPENAI" in os.environ:
-        detected_host = "codex"
-    elif "ANTIGRAVITY" in os.environ or "GEMINI" in os.environ:
-        detected_host = "antigravity"
+    host_detection = detect_host(host)
 
     # Check file locking
     locking_supported = False
     try:
         import fcntl
-        locking_supported = hasattr(fcntl, "flock")
-    except ImportError:
+        with tempfile.TemporaryFile() as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(handle, fcntl.LOCK_UN)
+        locking_supported = True
+    except (ImportError, OSError):
         locking_supported = False
 
+    wal_supported = False
+    try:
+        with tempfile.TemporaryDirectory(prefix='lumen-wal-') as directory:
+            with closing(sqlite3.connect(str(Path(directory)/'probe.db'))) as con:
+                wal_supported = con.execute('PRAGMA journal_mode=WAL').fetchone()[0] == 'wal'
+    except (OSError, sqlite3.Error):
+        pass
     missing = [name for name, check in modules.items() if not check['available']]
     failures = []
     if not fts5_working:
         failures.append('SQLite FTS5')
+    if not wal_supported:
+        failures.append('SQLite WAL')
     if not locking_supported:
         failures.append('file locking')
     if workspace_path is not None and not ws_writable:
@@ -91,14 +96,15 @@ def check_capabilities(workspace_path: Optional[Union[str, Path]] = None) -> Dic
         "status": status,
         "missing": missing, "failures": failures, "module_checks": modules,
         "contract_version": "1.0.0",
-        "detected_host": detected_host,
+        "detected_host": host_detection["host"],
+        "host_detection": host_detection,
         "runtime": {
             "python_version": platform.python_version(),
             "python_implementation": platform.python_implementation(),
             "platform": sys.platform,
             "sqlite_version": sqlite3.sqlite_version,
             "fts5_supported": fts5_working,
-            "wal_supported": True,
+            "wal_supported": wal_supported,
             "locking_supported": locking_supported,
         },
         "workspace": {

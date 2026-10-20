@@ -71,6 +71,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument("--query", "-q", help="Search query")
     parser.add_argument("--request-id", "-r", help="Stable request ID for idempotent mutations")
 
+    parser.add_argument("--host", help="Explicit host declaration; also LUMEN_HOST")
     parser.add_argument("--usage-log-location", action="append", help="Repeatable Codex log file/directory; may be outside project")
     parser.add_argument("--audience", choices=("tutor", "student"), default="tutor")
     args = parser.parse_args(argv)
@@ -113,7 +114,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                         exit_code=1 if res["missing"] else 0)
 
         elif op == "capabilities":
-            res = check_capabilities(ws_path)
+            res = check_capabilities(ws_path, host=args.host)
             output_json({"status": "success", "data": res})
 
         elif op in {"record_usage", "usage_summary"}:
