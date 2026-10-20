@@ -1,6 +1,7 @@
 """Environment, host, storage, and format capability detection."""
 
 import os
+import importlib
 from pathlib import Path
 import platform
 import sqlite3
@@ -36,25 +37,27 @@ def check_capabilities(workspace_path: Optional[Union[str, Path]] = None) -> Dic
     except Exception:
         fts5_working = False
 
-    # Check PDF extraction
-    pdf_supported = False
-    try:
-        import pypdf
-        pdf_supported = True
-    except ImportError:
-        pass
-
-    # Check PPTX extraction
-    pptx_supported = False
-    try:
-        import pptx
-        pptx_supported = True
-    except ImportError:
-        pass
-
-    # Check OCR / vision tool availability
-    ocr_supported = False
-    # Installed libraries do not establish a working OCR ingestion path.
+    modules = {}
+    for name in ('pypdf', 'pptx', 'latex2mathml.converter'):
+        try:
+            importlib.import_module(name)
+            modules[name] = {'available': True, 'error': None}
+        except Exception as exc:
+            modules[name] = {'available': False, 'error': f'{type(exc).__name__}: {exc}'}
+    pdf_supported = modules['pypdf']['available']
+    pptx_supported = modules['pptx']['available']
+    ocr_supported = False  # No implemented OCR ingestion path.
+    pdf_export = False
+    render_error = None
+    dependencies_ready = all(check['available'] for check in modules.values())
+    # Exercise the production renderer, including MathML and PDF parsing. A
+    # discoverable executable alone is never evidence of a working export path.
+    if dependencies_ready:
+        try:
+            probe_pdf_export()
+            pdf_export = True
+        except Exception as exc:
+            render_error = f'{type(exc).__name__}: {exc}'
 
     # Detect current host from environment
     detected_host = "generic_cli"
@@ -73,8 +76,20 @@ def check_capabilities(workspace_path: Optional[Union[str, Path]] = None) -> Dic
     except ImportError:
         locking_supported = False
 
+    missing = [name for name, check in modules.items() if not check['available']]
+    failures = []
+    if not fts5_working:
+        failures.append('SQLite FTS5')
+    if not locking_supported:
+        failures.append('file locking')
+    if workspace_path is not None and not ws_writable:
+        failures.append('writable workspace')
+    if render_error:
+        failures.append('PDF render: '+render_error)
+    status = 'blocked' if failures else 'degraded' if missing else 'ready'
     return {
-        "status": "ready" if fts5_working and locking_supported and (workspace_path is None or ws_writable) else "limited",
+        "status": status,
+        "missing": missing, "failures": failures, "module_checks": modules,
         "contract_version": "1.0.0",
         "detected_host": detected_host,
         "runtime": {
@@ -103,12 +118,29 @@ def check_capabilities(workspace_path: Optional[Union[str, Path]] = None) -> Dic
         },
         "artifact_capabilities": {
             "assessment_paper": True,
-            "pdf_export": bool(browser_executable()),
+            "pdf_export": pdf_export,
+            "pdf_render_error": render_error,
             "pdf_requirement": "Saved test requests require a rendered, visually checked PDF; a saved assessment alone is incomplete.",
         },
         "notes": [
             "Text and structure extractions operate locally without external paid APIs.",
-            "PDF and PPTX text extractors are active.",
+            f"PDF text extractor: {'active' if pdf_supported else 'unavailable'}. Try doctor for dependency details.",
+            f"PPTX text extractor: {'active' if pptx_supported else 'unavailable'}.",
+            f"PDF export: {'verified by render probe' if pdf_export else 'unavailable'}.",
             "Scanned pages without text layer are flagged with 'uncertain_scanned' quality flags.",
         ],
     }
+
+
+def probe_pdf_export():
+    """Render and parse a tiny fixture using the exact production export path."""
+    from .assessment.export import render_staged_paper
+    paper = {'assessment_id': 'capability-probe', 'title': 'SYNTHETIC runtime probe',
+             'questions': [{'item_order': 1, 'exercise_version_id': 'probe',
+                            'question_text': r'Compute $\frac{1}{2}+x^2$.',
+                            'source_reference': None, 'subparts': []}]}
+    with tempfile.TemporaryDirectory(prefix='lumen-capability-') as directory:
+        render_staged_paper(paper, directory)
+        path = Path(directory)/'test.pdf'
+        if not path.read_bytes().startswith(b'%PDF-'):
+            raise ValueError('Renderer output is not a PDF.')
