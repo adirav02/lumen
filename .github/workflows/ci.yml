@@ -1,0 +1,133 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    timeout-minutes: 20
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Check documentation and generated agent profiles
+        run: |
+          python scripts/check_docs.py
+          python scripts/sync_agents.py --check
+
+      # Fail explicitly if runner image changes would skip real PDF smoke tests.
+      - name: Require the PDF rendering browser
+        run: |
+          python - <<'PY'
+          import subprocess
+          from course_tutor.assessment.export import browser_executable
+          browser = browser_executable()
+          if not browser:
+              raise SystemExit("CI requires Chrome, Chromium or Edge for real PDF tests.")
+          subprocess.run([browser, "--version"], check=True)
+          PY
+
+      - name: Check capabilities
+        run: |
+          lumen capabilities
+
+      - name: Run pytest test suite
+        run: |
+          python scripts/run_tests.py -ra --junitxml=test-results/pytest.xml
+
+      - name: Preserve test results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-results-python-${{ matrix.python-version }}
+          path: test-results/*.xml
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Run synthetic probability demo
+        run: |
+          python demo.py
+
+  package:
+    name: Package Build & Integrity Check
+    timeout-minutes: 20
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install build & validation tools
+        run: |
+          python -m pip install --upgrade pip build twine
+
+      - name: Build distribution packages (sdist and wheel)
+        run: |
+          python scripts/build_public.py
+          python scripts/check_release_version.py
+
+      - name: Check package metadata with twine
+        run: |
+          twine check dist/*
+
+      - name: Verify clean wheel installation in isolated environment
+        run: |
+          python -m venv "$RUNNER_TEMP/wheel-env"
+          "$RUNNER_TEMP/wheel-env/bin/python" -m pip install dist/*.whl
+          "$RUNNER_TEMP/wheel-env/bin/python" -m pip check
+          cp demo.py "$RUNNER_TEMP/demo.py"
+          mkdir -p "$RUNNER_TEMP/examples"
+          cp -r examples/synthetic_probability "$RUNNER_TEMP/examples/"
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/wheel-env/bin/lumen" capabilities
+          "$RUNNER_TEMP/wheel-env/bin/course-tutor" capabilities
+          "$RUNNER_TEMP/wheel-env/bin/python" -I demo.py
+
+      - name: Preserve validated distributions
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: distributions
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7

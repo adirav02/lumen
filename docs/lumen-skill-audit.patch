@@ -1,0 +1,30 @@
+--- a/.agents/skills/lumen/SKILL.md
++++ b/.agents/skills/lumen/SKILL.md
+@@ -19,6 +19,12 @@
+    - Partial work: Preserve correct method evidence even if final arithmetic is wrong.
+    - Pausing: Untouched subparts remain unassessed; fatigue or pausing is never treated as a knowledge failure.
+    - Corrections: If the tutor or rubric made a mistake, correct or retract the evidence; the core deterministically recomputes the topic state without erasing the audit history.
++
++## Audited workflow
++
++Read `docs/lumen-workflow.md` from the project root for the audited CLI lifecycle,
++preference persistence, stable request IDs, and diagnostic evidence requirements.
++It supersedes incomplete examples below.
+ 
+ ## CLI Usage Quick Reference
+ 
+@@ -59,11 +65,12 @@
+ # 11. Semantic enrichment of extracted sections
+ lumen get-extracted-sections -j '{"source_version_id": "<ver_id>"}'
+ lumen enrich-source-version -j '{"source_version_id": "<ver_id>", "structured_units": [...], "publish": true}'
+-lumen validate-exercise-version -j '{"version_id": "<ex_ver_id>", "validation_state": "validated", "expected_revision": 1}'
++lumen validate-exercise-version -j '{"version_id": "<ex_ver_id>", "validation_state": "validated", "expected_revision": 1, "checks": {"mathematical_consistency": true, "rubric_review": true}}'
+ 
+ # 12. Run diagnostics & item-level assessments
+-lumen create-assessment -c "<course_id>" -j '{"title": "Midterm Diagnostic", "blueprint": {"topic_ids": ["<topic_id>"]}}'
++lumen create-assessment -c "<course_id>" -j '{"title": "Midterm Diagnostic", "blueprint": {"topic_ids": ["<topic_id>"]}, "selected_exercise_version_ids": ["<ex_ver_id>"]}'
+ lumen start-assessment-item-attempt -j '{"assessment_id": "<assessment_id>", "item_order": 1}'
++# Record submitted work and commit evaluated evidence on the linked item attempt first.
+ lumen record-assessment-item-score -j '{"assessment_id": "<assessment_id>", "item_order": 1, "points_awarded": 9.0}'
+ lumen assessment-progress -j '{"assessment_id": "<assessment_id>"}'
+ 

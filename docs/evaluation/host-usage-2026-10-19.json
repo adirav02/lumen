@@ -1,0 +1,91 @@
+{
+  "date": "2026-10-19",
+  "local_tests_passed": 273,
+  "claude": {
+    "executable_available": false,
+    "native_run": "not_run",
+    "configuration": "Project-local callback generated; no native loading claim.",
+    "verified": "Fixture/subprocess checks for transcript accounting, project scope, cache normalization, child separation, snapshot replay and prior status-line preservation."
+  },
+  "antigravity": {
+    "cli_version": "1.4.2",
+    "headless": {
+      "antigravity_cli_version": "1.4.2",
+      "wrapper_exit_code": 0,
+      "terminal_usage": [
+        {
+          "conversation_id": "2dc2220d-216a-4bf9-be30-a46f3b0ff847",
+          "status": "SUCCESS",
+          "num_turns": 1,
+          "duration_seconds": 3.8590674099999998,
+          "usage": {
+            "input_tokens": 14324,
+            "output_tokens": 143,
+            "thinking_tokens": 137,
+            "cache_read_tokens": 0,
+            "total_tokens": 14467
+          }
+        }
+      ],
+      "native_response_text_saved": false,
+      "stderr_present": false,
+      "scope": "One real native headless usage smoke request; not live Claude or full tutor conformance."
+    },
+    "interactive_callback": {
+      "native_tui_exit_code": 0,
+      "native_statusline_snapshots_observed": 1,
+      "terminal_output_saved": false
+    },
+    "numeric_snapshots": [
+      {
+        "kind": "snapshot",
+        "host": "antigravity",
+        "run_id": "antigravity-session:2dc2220d-216a-4bf9-be30-a46f3b0ff847",
+        "session_id": "2dc2220d-216a-4bf9-be30-a46f3b0ff847",
+        "provider": "unavailable",
+        "models": [
+          "Gemini 3.8 Flash (High)"
+        ],
+        "usage_source": "host_reported",
+        "usage_scope": "context_window",
+        "input_tokens": 20466,
+        "output_tokens": 143,
+        "cached_input_tokens": null,
+        "reasoning_output_tokens": null,
+        "observed_at": "2026-10-19T06:18:36.509749+00:00"
+      },
+      {
+        "kind": "snapshot",
+        "host": "antigravity",
+        "run_id": "antigravity-session:2dc2220d-216a-4bf9-be30-a46f3b0ff847",
+        "session_id": "2dc2220d-216a-4bf9-be30-a46f3b0ff847",
+        "provider": "unavailable",
+        "models": [],
+        "usage_source": "host_reported",
+        "usage_scope": "conversation",
+        "input_tokens": 14324,
+        "output_tokens": 143,
+        "cached_input_tokens": null,
+        "reasoning_output_tokens": 137,
+        "reported_usage": {
+          "input_tokens": 14324,
+          "output_tokens": 143,
+          "thinking_tokens": 137,
+          "cache_read_tokens": 0,
+          "total_tokens": 14467
+        },
+        "terminal_status": "SUCCESS",
+        "observed_at": "2026-10-19T06:17:14.088503+00:00"
+      }
+    ],
+    "scope": "CLI only. These smoke checks do not establish IDE measurement, teaching accuracy, fresh-host tutor resume or cross-host handover."
+  },
+  "limits": [
+    "No billed charge available",
+    "Status-line context counters are not cumulative consumption",
+    "Raw Antigravity cached-input accounting is preserved without guessing normalization",
+    "Internal retries, image counts and task correctness are not inferred"
+  ],
+  "privacy": "No prompts, response text, terminal/account UI, tool payloads or credentials saved in this report.",
+  "package_checks": "sdist/wheel built; metadata and dependency checks passed; installed-wheel Claude and Antigravity callbacks passed outside checkout using generated metadata."
+}

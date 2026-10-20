@@ -1,0 +1,15 @@
+{
+  "task_id": "{{TASK_ID}}",
+  "title": "{{TITLE}}",
+  "state": "planned",
+  "owner_role": "manager",
+  "host": null,
+  "model": null,
+  "started_utc": "{{UPDATED}}",
+  "ended_utc": null,
+  "updated": "{{UPDATED}}",
+  "based_on_commit": "{{COMMIT}}",
+  "next_step": "Complete the brief and implement solo unless delegation criteria apply.",
+  "mode": "solo",
+  "reason": "Routine work can be completed in the main session."
+}

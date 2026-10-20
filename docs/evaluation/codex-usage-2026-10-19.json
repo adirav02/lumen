@@ -1,0 +1,147 @@
+{
+  "collected_at": "2026-10-19T06:00:11.532250+00:00",
+  "scope": "Actual host-reported cumulative Codex counters from local logs whose recorded cwd matches this project. Not per-call usage or Lumen-only tasks. Sessions are not pooled because fork counters may include inherited history.",
+  "sessions_with_usage": 8,
+  "collector_errors": [],
+  "repeat_collection_appended": 0,
+  "bounded_watcher": "Completed a real 0.2-second polling run without errors; no global host settings changed.",
+  "snapshot_fields": [
+    {
+      "session_id": "01a14fe5-9c75-7281-a0bc-28449c668c3f",
+      "host": "codex",
+      "provider": "openai",
+      "models": [
+        "gpt-6.1-sol"
+      ],
+      "usage_source": "host_reported",
+      "observed_at": "2026-10-19T05:05:20.088000+00:00",
+      "input_tokens": 47522068,
+      "output_tokens": 271204,
+      "cached_input_tokens": 46234368,
+      "reasoning_output_tokens": 94163,
+      "event_id": "snapshot:426b4cff8dd95d77e31422f1d8fe675508066256df2be9c8bbac592129b1d0ac",
+      "source_file": "rollout-2026-10-18T19-43-30-01a14fe5-9c75-7281-a0bc-28449c668c3f.jsonl"
+    },
+    {
+      "session_id": "01a14fe8-220d-70b1-aa01-6f36a897d13a",
+      "host": "codex",
+      "provider": "openai",
+      "models": [
+        "gpt-6.1-sol"
+      ],
+      "usage_source": "host_reported",
+      "observed_at": "2026-10-18T16:48:27.809000+00:00",
+      "input_tokens": 259605,
+      "output_tokens": 6639,
+      "cached_input_tokens": 207744,
+      "reasoning_output_tokens": 199,
+      "event_id": "snapshot:2aef4b402cec9ca59336620cd32fc2cc698b1cbf256b6c37b57455bb3941d663",
+      "source_file": "rollout-2026-10-18T19-46-15-01a14fe8-220d-70b1-aa01-6f36a897d13a.jsonl"
+    },
+    {
+      "session_id": "01a1504b-a066-78f1-94fd-3bddf2b79781",
+      "host": "codex",
+      "provider": "openai",
+      "models": [
+        "gpt-6.1-sol"
+      ],
+      "usage_source": "host_reported",
+      "observed_at": "2026-10-18T18:35:53.878000+00:00",
+      "input_tokens": 90387,
+      "output_tokens": 1827,
+      "cached_input_tokens": 71040,
+      "reasoning_output_tokens": 577,
+      "event_id": "snapshot:6cbea2ce9c740c893211b9b4138cf6624c247deae45d866db96863875c6c8303",
+      "source_file": "rollout-2026-10-18T21-34-55-01a1504b-a066-78f1-94fd-3bddf2b79781.jsonl"
+    },
+    {
+      "session_id": "01a15099-ac67-7483-b474-782e1e5998ab",
+      "host": "codex",
+      "provider": "openai",
+      "models": [
+        "gpt-6.1-sol"
+      ],
+      "usage_source": "host_reported",
+      "observed_at": "2026-10-18T20:01:04.703000+00:00",
+      "input_tokens": 147486,
+      "output_tokens": 2069,
+      "cached_input_tokens": 114688,
+      "reasoning_output_tokens": 38,
+      "event_id": "snapshot:319555c586ddd096b6e6d76459c62ee476e9a8a92e7007e7796658ae28d3c4c2",
+      "source_file": "rollout-2026-10-18T23-00-10-01a15099-ac67-7483-b474-782e1e5998ab.jsonl"
+    },
+    {
+      "session_id": "01a1509e-b106-7400-a760-db15f596ed1e",
+      "host": "codex",
+      "provider": "openai",
+      "models": [
+        "gpt-6.1-sol"
+      ],
+      "usage_source": "host_reported",
+      "observed_at": "2026-10-18T20:19:41.183000+00:00",
+      "input_tokens": 1393267,
+      "output_tokens": 15284,
+      "cached_input_tokens": 1311616,
+      "reasoning_output_tokens": 1746,
+      "event_id": "snapshot:e328fd900f10252556b2f956c626747e3089e46b8799067ea5a898102e51190e",
+      "source_file": "rollout-2026-10-18T23-05-39-01a1509e-b106-7400-a760-db15f596ed1e.jsonl"
+    },
+    {
+      "session_id": "01a150a2-296e-7f50-b17a-67b0ad31d4c0",
+      "host": "codex",
+      "provider": "openai",
+      "models": [
+        "gpt-6.1-sol"
+      ],
+      "usage_source": "host_reported",
+      "observed_at": "2026-10-18T20:11:33.962000+00:00",
+      "input_tokens": 147328,
+      "output_tokens": 6043,
+      "cached_input_tokens": 129152,
+      "reasoning_output_tokens": 832,
+      "event_id": "snapshot:fa63c5ce277ad7670371dda86904743b2727c7aa363a741c859c8bb14b48065b",
+      "source_file": "rollout-2026-10-18T23-09-27-01a150a2-296e-7f50-b17a-67b0ad31d4c0.jsonl"
+    },
+    {
+      "session_id": "01a1528e-b3ef-7bd0-867c-c1e04ae14d9f",
+      "host": "codex",
+      "provider": "openai",
+      "models": [
+        "gpt-6.1-sol"
+      ],
+      "usage_source": "host_reported",
+      "observed_at": "2026-10-19T05:24:06.102000+00:00",
+      "input_tokens": 5351983,
+      "output_tokens": 22317,
+      "cached_input_tokens": 5159680,
+      "reasoning_output_tokens": 4325,
+      "event_id": "snapshot:36bc7031705539ad1cabc4dc82d01830460d06b8420efd8f2073ef94b529f803",
+      "source_file": "rollout-2026-10-19T08-07-26-01a1528e-b3ef-7bd0-867c-c1e04ae14d9f.jsonl"
+    },
+    {
+      "session_id": "01a152a0-aae1-79f2-8ef6-b68cc92b26a4",
+      "host": "codex",
+      "provider": "openai",
+      "models": [
+        "gpt-6.1-sol"
+      ],
+      "usage_source": "host_reported",
+      "observed_at": "2026-10-19T05:59:46.268000+00:00",
+      "input_tokens": 7850142,
+      "output_tokens": 62703,
+      "cached_input_tokens": 7649408,
+      "reasoning_output_tokens": 18725,
+      "event_id": "snapshot:cb048a1677c63e4062b145e2871d9ed5c4c96150416d73c596d4b0bff9ffcbc3",
+      "source_file": "rollout-2026-10-19T08-27-03-01a152a0-aae1-79f2-8ef6-b68cc92b26a4.jsonl"
+    }
+  ],
+  "unavailable": [
+    "per-request completeness",
+    "every internal retry and its cost",
+    "image counts",
+    "request latency",
+    "actual billed cost",
+    "cost per correct educational task"
+  ],
+  "privacy": "No prompts, messages, learner answers, tool bodies, credentials or absolute home paths copied into this report."
+}

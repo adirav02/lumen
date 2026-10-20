@@ -1,0 +1,186 @@
+{
+  "scope": "Captured judgment comparison and deterministic core-policy evaluation; no model invoked. Feedback quality requires separate review.",
+  "artifact_sha256": {
+    "cases.json": "eb3369745d647da056b85803b262b071d8986dd88246266e3e69f2e9d1392f03",
+    "checked-references.json": "d59fab36ba460d912668b3a45be8de4662f62d41ae5428efe53e85eb0e89754d",
+    "graph.png": "214f60911030158624a7094932d6cdd88c162fc898b574f9cfc013518386a864",
+    "graph-unknown.png": "8c45f9ca78c4149bbde55bb1f76420b1c3d762fbc3d3777c22208732815ba368",
+    "normalized_reviews": "a6a14dc2d4423a6a699ca00645fa1024cb2adacca87010e09512fcd5559dc9bd"
+  },
+  "cases": 16,
+  "passed": 16,
+  "failed": 0,
+  "critical_failures": 0,
+  "results": [
+    {
+      "id": "bayes-exact",
+      "category": "formula",
+      "passed": true,
+      "critical_failure": false,
+      "issues": [],
+      "core_levels": [
+        "independent_mastery"
+      ],
+      "reference": "checked-references.json#bayes-exact"
+    },
+    {
+      "id": "zero-conditioning",
+      "category": "assumption",
+      "passed": true,
+      "critical_failure": false,
+      "issues": [],
+      "core_levels": [
+        "incorrect"
+      ],
+      "reference": "checked-references.json#zero-conditioning"
+    },
+    {
+      "id": "arithmetic-only",
+      "category": "formula",
+      "passed": true,
+      "critical_failure": false,
+      "issues": [],
+      "core_levels": [
+        "partial_progress"
+      ],
+      "reference": "checked-references.json#arithmetic-only"
+    },
+    {
+      "id": "covariance",
+      "category": "assumption",
+      "passed": true,
+      "critical_failure": false,
+      "issues": [],
+      "core_levels": [
+        "incorrect"
+      ],
+      "reference": "checked-references.json#covariance"
+    },
+    {
+      "id": "cancel-domain",
+      "category": "algebra",
+      "passed": true,
+      "critical_failure": false,
+      "issues": [],
+      "core_levels": [
+        "partial_progress"
+      ],
+      "reference": "checked-references.json#cancel-domain"
+    },
+    {
+      "id": "extraneous-root",
+      "category": "algebra",
+      "passed": true,
+      "critical_failure": false,
+      "issues": [],
+      "core_levels": [
+        "partial_progress"
+      ],
+      "reference": "checked-references.json#extraneous-root"
+    },
+    {
+      "id": "log-domain",
+      "category": "calculus",
+      "passed": true,
+      "critical_failure": false,
+      "issues": [],
+      "core_levels": [
+        "partial_progress"
+      ],
+      "reference": "checked-references.json#log-domain"
+    },
+    {
+      "id": "weighted-diagram",
+      "category": "diagram",
+      "passed": true,
+      "critical_failure": false,
+      "issues": [],
+      "core_levels": [
+        "independent_mastery"
+      ],
+      "reference": "checked-references.json#weighted-diagram"
+    },
+    {
+      "id": "ambiguous-diagram",
+      "category": "ambiguous image",
+      "passed": true,
+      "critical_failure": false,
+      "issues": [],
+      "core_levels": [],
+      "reference": "checked-references.json#ambiguous-diagram"
+    },
+    {
+      "id": "alternative-proof",
+      "category": "proof",
+      "passed": true,
+      "critical_failure": false,
+      "issues": [],
+      "core_levels": [
+        "independent_mastery"
+      ],
+      "reference": "checked-references.json#alternative-proof"
+    },
+    {
+      "id": "shuffled-hebrew",
+      "category": "versioned choice",
+      "passed": true,
+      "critical_failure": false,
+      "issues": [],
+      "core_levels": [
+        "independent_mastery"
+      ],
+      "reference": "checked-references.json#shuffled-hebrew"
+    },
+    {
+      "id": "untouched-part",
+      "category": "partial submission",
+      "passed": true,
+      "critical_failure": false,
+      "issues": [],
+      "core_levels": [
+        "independent_mastery"
+      ],
+      "reference": "checked-references.json#untouched-part"
+    },
+    {
+      "id": "prior-hint",
+      "category": "assistance",
+      "passed": true,
+      "critical_failure": false,
+      "issues": [],
+      "core_levels": [
+        "assisted_success"
+      ],
+      "reference": "checked-references.json#prior-hint"
+    },
+    {
+      "id": "later-solution",
+      "category": "assistance",
+      "passed": true,
+      "critical_failure": false,
+      "issues": [],
+      "core_levels": [
+        "independent_mastery"
+      ],
+      "reference": "checked-references.json#later-solution"
+    },
+    {
+      "id": "bad-reference",
+      "category": "reference conflict",
+      "passed": true,
+      "critical_failure": false,
+      "issues": [],
+      "core_levels": [],
+      "reference": "checked-references.json#bad-reference"
+    },
+    {
+      "id": "no-observed-work",
+      "category": "ambiguous submission",
+      "passed": true,
+      "critical_failure": false,
+      "issues": [],
+      "core_levels": [],
+      "reference": "checked-references.json#no-observed-work"
+    }
+  ]
+}
