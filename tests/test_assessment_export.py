@@ -219,3 +219,12 @@ def test_staged_real_pdf_privacy_and_hashes(saved, tmp_path):
     assert core.con.total_changes == changes
     with pytest.raises(ValidationError, match='without paper artifacts'):
         render_staged_paper(paper, stage)
+
+
+def test_csv_data_is_a_safe_complete_table():
+    from course_tutor.assessment.export import render_question_text
+    html = render_question_text('Setup\nday,crates\nMonday,18\nTuesday,5\n\nFind the total.')
+    assert '<table>' in html and '<th>day</th>' in html
+    assert '<td>Monday</td><td>18</td>' in html
+    assert '<td>Tuesday</td><td>5</td>' in html
+    assert 'Find the total.' in html

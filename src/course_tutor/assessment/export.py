@@ -4,6 +4,7 @@ Printing does not mark questions presented, answered or visually verified.
 """
 
 import hashlib
+import csv
 from html import escape
 import json
 import os
@@ -69,6 +70,33 @@ def formatted_text(text):
     return ''.join(result)
 
 
+
+def render_question_text(text):
+    """Keep source lines; format explicitly delimited CSV data as real tables."""
+    lines, parts, index = text.splitlines(), [], 0
+    while index < len(lines):
+        line = lines[index]
+        header = re.fullmatch(r'[A-Za-z_][A-Za-z_0-9]*(?:,[A-Za-z_][A-Za-z_0-9]*)+', line.strip())
+        if header:
+            rows = list(csv.reader([line]))
+            cursor = index+1
+            while cursor < len(lines) and lines[cursor].strip():
+                row = next(csv.reader([lines[cursor]]))
+                if len(row) != len(rows[0]):
+                    break
+                rows.append(row)
+                cursor += 1
+            if len(rows) > 1:
+                parts.append('<table><thead><tr>'+''.join('<th>'+escape(c)+'</th>' for c in rows[0])+
+                             '</tr></thead><tbody>'+''.join('<tr>'+''.join('<td>'+formatted_text(c)+'</td>'
+                             for c in row)+'</tr>' for row in rows[1:])+'</tbody></table>')
+                index = cursor
+                continue
+        if line.strip():
+            parts.append('<p>'+formatted_text(line)+'</p>')
+        index += 1
+    return ''.join(parts)
+
 def render_paper_html(paper):
     text = '\n'.join(q['question_text'] for q in paper['questions'])
     hebrew = len(re.findall(r'[\u0590-\u05ff]', text))
@@ -78,7 +106,7 @@ def render_paper_html(paper):
     question_label = {'he': 'שאלה', 'ar': 'سؤال', 'en': 'Question'}[language]
     sections = []
     for question in paper['questions']:
-        paragraphs = ''.join('<p>'+formatted_text(line)+'</p>' for line in question['question_text'].splitlines() if line.strip())
+        paragraphs = render_question_text(question['question_text'])
         source = question['source_reference']
         if source:
             labels = list(dict.fromkeys(span.get('label', '') for span in source['source_spans'] if span.get('label')))
@@ -98,6 +126,8 @@ def render_paper_html(paper):
         sections.append('<section><h2>'+escape(heading)+'</h2><div class="question">'+paragraphs+
                         '</div><p class="source">'+escape(citation)+'</p><div class="answer-space"></div></section>')
     title = escape(paper['title'])
+    point_total = (' · '+str(sum(q['max_points'] for q in paper['questions']))+' total points'
+                   if all('max_points' in q for q in paper['questions']) else '')
     return f'''<!doctype html><html lang="{language}" dir="{direction}"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src data:">
 <title>{title}</title><style>
@@ -107,8 +137,11 @@ main{{max-width:180mm;margin:auto}}h1{{font-size:23pt;margin:0 0 5mm}}h2{{font-s
 p{{margin:2.5mm 0;overflow-wrap:anywhere}}.meta,.source{{font-size:9pt;color:#526477}}
 section{{break-before:page}}section:first-of-type{{break-before:auto}}h2,.source{{break-inside:avoid}}
 .formula{{direction:ltr;unicode-bidi:isolate}}math{{font-family:"STIX Two Math","Cambria Math",serif}}
+table{{border-collapse:collapse;font-size:9pt;width:100%;margin:4mm 0}}
+th,td{{border:1px solid #ccd5df;padding:2mm;text-align:start;overflow-wrap:anywhere}}
+thead{{display:table-header-group}}tr{{break-inside:avoid}}
 .answer-space{{height:45mm;margin:7mm 0;border-bottom:1px solid #d5dde6}}
-</style></head><body><main><h1>{title}</h1><p class="meta">{len(paper['questions'])} questions · {escape(paper['assessment_id'])}</p>
+</style></head><body><main><h1>{title}</h1><p class="meta">{len(paper['questions'])} questions{point_total} · {escape(paper['assessment_id'])}</p>
 {''.join(sections)}</main></body></html>'''
 
 
