@@ -1,0 +1,10 @@
+SYNTHETIC GENERATED AUDIT MATERIAL — Lecture 2, version 2
+This is the replacement content for lecture_02_bayes_v1.txt, NOT a second independent lecture.
+Upload the two versions under the same logical source filename to probe versioning.
+All events share a probability space; D and not-D partition the population.
+P(D)=0.02, P(not-D)=0.98, P(+|D)=0.90, and P(+|not-D)=0.05.
+The false-positive rate changed from 0.10 in version 1 to 0.05 in version 2.
+P(+)=0.90*0.02+0.05*0.98=0.067>0.
+P(D|+)=0.018/0.067=18/67.
+Version-1 posterior 9/58 does not apply to this new question data.
+Hebrew aliases: נוסחת בייס, הסתברות מותנית, אי תלות.

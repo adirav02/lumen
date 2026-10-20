@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 
-FIXTURES = Path(__file__).resolve().parents[1] / "examples" / "audit_course"
+FIXTURES = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "audit_course"
 
 
 def test_independent_course_walkthrough(tmp_path):

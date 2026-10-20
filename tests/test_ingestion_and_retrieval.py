@@ -257,7 +257,7 @@ def test_realistic_pdf_pptx_hebrew_fixtures_ingestion(temp_workspace):
     core = LumenCore(temp_workspace)
     try:
         core.create_course("Advanced Probability", course_id="adv-prob")
-        fixtures_dir = Path(__file__).parent.parent / "examples" / "synthetic_probability" / "materials"
+        fixtures_dir = Path(__file__).parent.parent / "tests" / "fixtures" / "synthetic_probability" / "materials"
 
         # 1. Realistic PDF with preamble and conditions
         pdf_file = fixtures_dir / "sample_lecture.pdf"

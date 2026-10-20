@@ -12,7 +12,7 @@ import tempfile
 from course_tutor.api import LumenCore
 
 
-DEFAULT_FIXTURES = Path(__file__).resolve().parents[1] / "examples/educational_evaluation"
+DEFAULT_FIXTURES = Path(__file__).resolve().parents[1] / "tests/fixtures/educational_evaluation"
 
 
 def _indexed(rows):

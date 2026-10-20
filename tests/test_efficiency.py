@@ -32,7 +32,7 @@ def test_recurring_context_payload_measurement(temp_workspace):
     core = LumenCore(temp_workspace)
     try:
         core.create_course("Probability", course_id="prob-eff")
-        mat_dir = Path(__file__).parent.parent / "examples" / "synthetic_probability" / "materials"
+        mat_dir = Path(__file__).parent.parent / "tests" / "fixtures" / "synthetic_probability" / "materials"
 
         # Ingest both materials
         core.ingest_source("prob-eff", mat_dir / "lecture_bayes.txt", logical_name="bayes")
@@ -97,7 +97,7 @@ def test_complete_multiturn_workflow_efficiency_benchmark(temp_workspace):
     core = LumenCore(temp_workspace)
     try:
         core.create_course("Probability", course_id="prob-bench")
-        mat_dir = Path(__file__).parent.parent / "examples" / "synthetic_probability" / "materials"
+        mat_dir = Path(__file__).parent.parent / "tests" / "fixtures" / "synthetic_probability" / "materials"
 
         # Ingest course materials
         core.ingest_source("prob-bench", mat_dir / "lecture_bayes.txt", logical_name="bayes")
