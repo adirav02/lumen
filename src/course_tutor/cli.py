@@ -101,7 +101,13 @@ def main(argv: Optional[List[str]] = None) -> None:
                          "details": {}}, exit_code=1)
 
     try:
-        if op == "capabilities":
+        if op == "doctor":
+            from .doctor import check_dependencies
+            res = check_dependencies()
+            output_json({"status": res["status"], "data": res},
+                        exit_code=1 if res["missing"] else 0)
+
+        elif op == "capabilities":
             res = check_capabilities(ws_path)
             output_json({"status": "success", "data": res})
 

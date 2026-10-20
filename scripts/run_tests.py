@@ -58,6 +58,14 @@ def main(args):
     log_path.parent.mkdir(parents=True, exist_ok=True)
     receipt_path = ROOT / '.tmp/test-receipt.json'
     receipt_path.unlink(missing_ok=True)
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
+    from course_tutor.doctor import check_dependencies, preflight_message
+    dependencies = check_dependencies()
+    if dependencies['missing']:
+        message = preflight_message(dependencies)
+        log_path.write_text(message+'\n')
+        print(message)
+        return 2
     before = tree_identity(ROOT)
     with tempfile.TemporaryDirectory(prefix='lumen-tests-') as directory:
         result_path = Path(directory) / 'summary.json'
