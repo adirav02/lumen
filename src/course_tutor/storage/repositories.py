@@ -963,7 +963,7 @@ class ExerciseRepository:
             )
         if expected_question_text is not None and expected_question_text != initial_ver.question_text:
             raise ValidationError(
-                f"Exercise version '{version_id}' question text mismatch. Attestation was prepared for a different question text.",
+                f"Exercise version '{version_id}' question text mismatch. Attestation was prepared for a different question text. Use canonical complete text; context_blocks deduplicates shared setup on retries.",
                 details={"expected": expected_question_text, "actual": initial_ver.question_text},
             )
         if expected_reference_solution is not None and expected_reference_solution != initial_ver.reference_solution:
@@ -1095,7 +1095,7 @@ class ExerciseRepository:
             if self.con.execute("SELECT 1 FROM sqlite_master WHERE name='question_occurrences'").fetchone():
                 occurrence = self.con.execute("SELECT review_status FROM question_occurrences WHERE exercise_version_id=?", (version_id,)).fetchone()
                 if occurrence and occurrence[0] != "accepted":
-                    raise ValidationError("Accept the source question transcription before validating its exercise version.")
+                    raise ValidationError("Accept the source question transcription before validating its exercise version. Text changes require renewed review_question_occurrence acceptance at its current occurrence revision; prior acceptance is invalidated.")
             if not effective_solution or not effective_solution.strip():
                 raise ValidationError(
                     f"Cannot validate exercise version '{version_id}': missing reference or verified solution."

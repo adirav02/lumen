@@ -768,6 +768,13 @@ class LumenCore:
         return self._execute_idempotent(request_id, operation, course_id, params,
             lambda: getattr(service(self.con), method)(course_id=course_id, **params))
 
+    def batch_questions(self, course_id, items, request_id):
+        from .questions.batch import batch_questions
+        if not isinstance(request_id, str) or not request_id.strip():
+            raise ValidationError('batch_questions requires a stable nonempty request_id.')
+        return self._execute_idempotent(request_id, 'batch_questions', course_id, {'items': items},
+                                        lambda: batch_questions(self.con, course_id, items))
+
     def catalog_exam_questions(self, course_id, source_version_id, questions=None, exam_label=None, request_id=None):
         return self._question_mutation("catalog_exam_questions", course_id, request_id,
             dict(source_version_id=source_version_id, questions=questions, exam_label=exam_label), QuestionCatalog, "catalog")
@@ -947,7 +954,11 @@ class LumenCore:
         subparts: Optional[List[Dict[str, Any]]] = None,
         topic_mappings: Optional[List[str]] = None,
         skill_mappings: Optional[List[str]] = None,
+        context_blocks: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
+        if context_blocks is not None:
+            from .questions.batch import compose_question_text
+            question_text = compose_question_text(question_text, context_blocks)
         params = {
             "version_id": version_id,
             "question_text": question_text,
@@ -963,6 +974,7 @@ class LumenCore:
             self._verify_not_detached()
             validate_all_finite_numbers(rubric, "rubric")
             with atomic_transaction(self.con):
+                before = self.exercise_repo.get_exercise_version(version_id)
                 ver = self.exercise_repo.update_exercise_version(
                     version_id=version_id,
                     question_text=question_text,
@@ -973,7 +985,10 @@ class LumenCore:
                 )
                 for t_id in ver.topic_mappings:
                     self.evidence_repo.recompute_topic_state(ver.course_id, t_id)
-                return ver.to_dict()
+                current_revision = len(ver.revision_history)+1
+                changed = before is not None and len(before.revision_history)+1 != current_revision
+                return {**ver.to_dict(), 'current_revision': current_revision, 'changed': changed,
+                        'revision_note': 'Use current_revision for the next call; no-op updates do not increment revision.'}
 
         result = self._execute_idempotent(request_id, "update_exercise_version", None, params, _do)
         return result if request_id else result["data"]
