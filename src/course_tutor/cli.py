@@ -355,7 +355,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                     params = {k: v for k, v in payload.items() if k not in {"course_id", "request_id"}}
                     output_operation_result(getattr(core, op)(course_id=cid, request_id=req_id, **params))
 
-                elif op in {"list_questions", "exam_catalog_status", "list_question_relations", "question_history", "attempt_history", "search_questions", "student_search", "student_preview"}:
+                elif op in {"list_questions", "exam_catalog_status", "list_question_relations", "question_history", "attempt_history", "search_questions", "student_search", "student_preview", "lexical_question_overlap"}:
                     params = {k: v for k, v in payload.items() if k not in {"course_id", "request_id"}}
                     output_json({"status": "success", "data": getattr(core, op)(course_id=cid, **params)})
 

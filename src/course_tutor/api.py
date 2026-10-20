@@ -822,6 +822,10 @@ class LumenCore:
         self._verify_not_detached()
         return QuestionCatalog(self.con).exam_status(course_id, source_version_id)
 
+    def lexical_question_overlap(self, course_id, exercise_version_id, threshold=0.45, limit=20):
+        self._verify_not_detached()
+        return QuestionCatalog(self.con).lexical_overlap(course_id, exercise_version_id, threshold, limit)
+
     def list_question_relations(self, course_id, exercise_version_id=None, limit=50, after_id=""):
         self._verify_not_detached()
         return QuestionCatalog(self.con).list_relations(course_id, exercise_version_id, limit, after_id)

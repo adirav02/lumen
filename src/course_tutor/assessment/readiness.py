@@ -416,7 +416,8 @@ def _report_once(con, course_id, blueprint, learner_id, *, internal=False, live_
                     elif value != slot["difficulty"]:
                         mismatch = True
                 if "year_min" in slot or "year_max" in slot:
-                    year = meta.get("year")
+                    from ..questions.provenance import verified_year
+                    year = verified_year(meta)
                     if type(year) is not int or not 1 <= year <= 9999:
                         fields.add("year")
                     elif not slot.get("year_min", 1) <= year <= slot.get("year_max", 9999):

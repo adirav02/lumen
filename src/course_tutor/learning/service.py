@@ -261,11 +261,6 @@ class LearningService:
                 except ValueError as err:
                     raise ValidationError(f"Invalid boolean in evaluation: {err}")
 
-                if requested_level in {"independent_mastery", "assisted_success"} and not is_correct:
-                    raise ValidationError("Positive demonstrated_level conflicts with correct=False.")
-                if requested_level == "incorrect" and is_correct:
-                    raise ValidationError("demonstrated_level='incorrect' conflicts with correct=True.")
-
                 error_category = ev_data.get("error_category")
                 rationale = ev_data.get("rationale", "")
 
@@ -348,6 +343,18 @@ class LearningService:
                     raise ValidationError(
                         "Evaluation expected content hash does not match current exercise version."
                     )
+
+                if 'answer_set_key' in ev_data:
+                    from ..questions.answers import accepts_answer
+                    matched = accepts_answer(ex_ver.rubric, ev_data['answer_set_key'], submission_event.content)
+                    if 'correct' in ev_data and is_correct != matched:
+                        raise ValidationError('Caller correctness conflicts with the full checked answer set.')
+                    is_correct = matched
+
+                if requested_level in {"independent_mastery", "assisted_success"} and not is_correct:
+                    raise ValidationError("Positive demonstrated_level conflicts with correct=False.")
+                if requested_level == "incorrect" and is_correct:
+                    raise ValidationError("demonstrated_level='incorrect' conflicts with correct=True.")
 
                 # Reject duplicate active evaluation for the same (subpart_key, skill_id, submission_event)
                 existing_active = [

@@ -236,6 +236,11 @@ class QuestionCatalog:
                 json.dumps(checked_spans, ensure_ascii=False), json.dumps(sorted(set(flags))), now))
             if 'visual_review_status' in {r[1] for r in self.con.execute('PRAGMA table_info(question_occurrences)')} and src['mime_type'].startswith('text/'):
                 self.con.execute("UPDATE question_occurrences SET visual_review_status='not_required' WHERE exercise_version_id=?", (ver_id,))
+            from .provenance import filename_provenance
+            provenance = filename_provenance(src['original_filename'])
+            if provenance:
+                self.con.execute('UPDATE question_occurrences SET metadata_json=? WHERE exercise_version_id=?',
+                                 (json.dumps(provenance), ver_id))
             added += 1
         if added:
             self.con.execute("UPDATE exam_catalogs SET status='pending_review',revision=revision+1 WHERE source_version_id=?", (source_version_id,))
@@ -366,6 +371,30 @@ class QuestionCatalog:
             item['metadata'] = json.loads(item.pop('metadata_json') or '{}')
             results.append(item)
         return {'questions': results, 'query': query, 'limit': limit, 'notes': 'Raw search hits do not establish review or correctness.'}
+
+    def lexical_overlap(self, course_id, exercise_version_id, threshold=0.45, limit=20):
+        page_size(limit)
+        if type(threshold) not in (int, float) or not 0 < threshold <= 1:
+            raise ValidationError('threshold must be a finite number in (0,1].')
+        version = self.exercises.get_exercise_version(exercise_version_id)
+        if not version or version.course_id != course_id:
+            raise ValidationError('Question not found in this course.')
+        def tokens(text):
+            return set(re.findall(r'\w+', unicodedata.normalize('NFKC', text).casefold()))
+        left = tokens(version.question_text)
+        candidates = []
+        # Cheap tutor-only advisory over this course, including uncataloged exercises.
+        for row in self.con.execute('SELECT id,question_text FROM exercise_versions WHERE course_id=? AND id!=? ORDER BY id',
+                                    (course_id, exercise_version_id)):
+            right = tokens(row['question_text'])
+            score = len(left & right)/len(left | right) if left | right else 0
+            if score >= threshold:
+                candidates.append({'exercise_version_id': row['id'], 'lexical_jaccard': score,
+                                   'status': 'advisory_tutor_review'})
+        candidates.sort(key=lambda r: (-r['lexical_jaccard'], r['exercise_version_id']))
+        return {'candidates': candidates[:limit], 'threshold': threshold,
+                'scope': 'Normalized token Jaccard over current course questions; advisory only.',
+                'notes': 'No candidates found does not prove novelty or semantic independence.'}
 
     def review_relation(self, course_id, relation_id, expected_revision, status, notes):
         require_text(notes, "notes")

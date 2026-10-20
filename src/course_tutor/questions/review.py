@@ -43,6 +43,8 @@ class QuestionReview(QuestionCatalog):
                 raise ValidationError('Each solution link needs a source_version_id.')
             self.source(course_id, link['source_version_id'])
         combined = {**json.loads(row['metadata_json']), **metadata}
+        from .provenance import normalize_metadata
+        combined = normalize_metadata(combined)
         history = json.loads(row['review_history_json']) + [{'action': 'annotated', 'previous_metadata': json.loads(row['metadata_json']),
             'previous_solution_links': json.loads(row['solution_links_json']), 'at': utc_now_iso()}]
         self.con.execute('UPDATE question_occurrences SET metadata_json=?,solution_links_json=?,review_history_json=?,revision=revision+1 WHERE id=?',

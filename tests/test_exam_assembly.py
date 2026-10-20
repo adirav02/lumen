@@ -226,7 +226,7 @@ def test_prepare_verified_source_year_difficulty_and_type(selection_core, tmp_pa
     qs = core.list_questions('alg', source)['questions']
     for i, q in enumerate(qs):
         core.con.execute("UPDATE exercise_versions SET validation_state='validated' WHERE id=?", (q['exercise_version_id'],))
-        metadata = {'section': 'A', 'question_type': 'proof', 'year': 2024, 'difficulty': 'hard'}
+        metadata = {'section': 'A', 'question_type': 'proof', 'year': 2024, 'year_provenance': 'verified_exam_date', 'year_evidence': 'Synthetic source date', 'difficulty': 'hard'}
         if i == 1:
             metadata.pop('year')
         if i == 2:
@@ -695,7 +695,7 @@ def reviewed_relaxation_bank(core, tmp_path):
         core.con.execute('UPDATE question_fingerprints SET exact_hash=?,structure_hash=? WHERE exercise_version_id=?',
                          (vid, vid, vid))
         core.con.execute("UPDATE question_occurrences SET review_status='accepted',visual_review_status='verified',metadata_json=? WHERE id=?",
-                         (json.dumps(dict(difficulty=difficulty, year=year, question_type='proof', section='A')), q['id']))
+                         (json.dumps(dict(difficulty=difficulty, year=year, year_provenance='verified_exam_date', year_evidence='Synthetic source date', question_type='proof', section='A')), q['id']))
     blueprint = {'slots': [dict(id='s', count=1, topic_ids=[topic], question_type='proof', section='A',
                                 difficulty='hard', year_min=2024)],
                  'relaxations': ['difficulty', 'year_min']}
@@ -779,7 +779,7 @@ def test_relaxed_retry_keeps_saved_policy_and_reexport(publish_core, tmp_path, m
     items = AssemblyRepository(core.con).items('publication')
     # Now a stricter prefix would work; retry must keep its original selection.
     core.con.execute('UPDATE question_occurrences SET metadata_json=? WHERE id=?',
-                     (json.dumps(dict(difficulty='hard', year=2025, question_type='proof', section='A')), questions[0]['id']))
+                     (json.dumps(dict(difficulty='hard', year=2025, year_provenance='verified_exam_date', year_evidence='Synthetic source date', question_type='proof', section='A')), questions[0]['id']))
     monkeypatch.setattr(coordinator, 'prepare_exam', lambda *a, **k: pytest.fail('retry must not select'))
     result = assemble(core, blueprint=bp)['data']
     assert job(core)['generation'] == saved['generation']
