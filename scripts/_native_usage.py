@@ -38,20 +38,21 @@ def spawn(meta):
     return source.get('subagent', {}).get('thread_spawn', {})
 
 
-def discover(home):
+def discover(home, paths=None):
     sessions = {}
-    for directory in ('sessions', 'archived_sessions'):
-        for path in sorted((home / directory).rglob('*.jsonl')):
-            first = next(records(path), {})
-            if first.get('type') != 'session_meta':
-                continue
-            meta = first.get('payload', {})
-            if not meta.get('id') or not meta.get('cwd'):
-                raise ValueError(f'{path.name}: session metadata lacks id/cwd')
-            entry = sessions.setdefault(meta['id'], {'meta': meta, 'paths': []})
-            if entry['meta'] != meta:
-                raise ValueError(f"Conflicting metadata for {meta['id']}")
-            entry['paths'].append(path)
+    paths = paths if paths is not None else sorted({p for directory in ('sessions', 'archived_sessions')
+                                                    for p in (home / directory).rglob('*.jsonl')})
+    for path in paths:
+        first = next(records(path), {})
+        if first.get('type') != 'session_meta':
+            continue
+        meta = first.get('payload', {})
+        if not meta.get('id') or not meta.get('cwd'):
+            raise ValueError(f'{path.name}: session metadata lacks id/cwd')
+        entry = sessions.setdefault(meta['id'], {'meta': meta, 'paths': []})
+        if entry['meta'] != meta:
+            raise ValueError(f"Conflicting metadata for {meta['id']}")
+        entry['paths'].append(path)
     return sessions
 
 

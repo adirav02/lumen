@@ -8,7 +8,7 @@ from pathlib import Path
 from _native_usage import COUNTERS, discover, read_thread, spawn, summarize, utc
 
 
-def collect(repo, *, root_thread=None, since=None, until=None, task=None, codex_home=None):
+def collect(repo, *, root_thread=None, since=None, until=None, task=None, codex_home=None, log_locations=None):
     repo = Path(repo).resolve()
     if task:
         state = json.loads((Path(task) / 'status.json').read_text())
@@ -25,7 +25,9 @@ def collect(repo, *, root_thread=None, since=None, until=None, task=None, codex_
     if not root_thread and not since:
         raise ValueError('Supply --root-thread, --since/--until, or --task with timestamps')
     home = Path(codex_home or os.environ.get('CODEX_HOME') or Path.home()/'.codex')
-    sessions = discover(home)
+    from course_tutor.usage_locations import log_files
+    paths = log_files(log_locations)
+    sessions = discover(home, paths=paths)
     parsed = {}
     if not root_thread:
         candidates = []
@@ -71,7 +73,8 @@ def collect(repo, *, root_thread=None, since=None, until=None, task=None, codex_
         rows.append(summarize(key, role, responses, tools))
         all_responses.update(responses)
         all_tools.update(tools)
-    return dict(root_thread_id=root_thread, threads=rows,
+    return dict(usage_state="measured", scope_limit="Observed native response IDs in selected logs, root lineage and UTC window; hidden retries/billing remain unavailable.",
+                root_thread_id=root_thread, threads=rows,
                 total=summarize('TOTAL', 'all', all_responses, all_tools),
                 note='Root counters exclude children; total adds root and descendants. Cached input is a subset of input; reasoning is a subset of output. Counts are observed native records, not billing or hidden-retry completeness.')
 
@@ -93,13 +96,15 @@ def main():
     parser.add_argument('--until')
     parser.add_argument('--task', type=Path)
     parser.add_argument('--codex-home', type=Path)
+    parser.add_argument('--log-location', dest='log_locations', action='append', type=Path)
     parser.add_argument('--json', action='store_true')
     args = vars(parser.parse_args())
     as_json = args.pop('json')
     try:
         report = collect(**args)
     except (OSError, ValueError, KeyError, TypeError) as exc:
-        parser.exit(1, f'{exc}\n')
+        print(json.dumps({'usage_state': 'unavailable', 'total': None, 'reason': str(exc)}))
+        raise SystemExit(1)
     print(json.dumps(report, indent=2) if as_json else table(report) + '\n' + report['note'])
 
 

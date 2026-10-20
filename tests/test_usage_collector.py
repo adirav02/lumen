@@ -88,7 +88,7 @@ def test_other_projects_are_excluded_before_body_is_parsed(tmp_path):
 def test_empty_or_missing_telemetry_is_explicit(tmp_path):
     _, project, home, log = fixture(tmp_path, rows=[{"type": "event_msg", "payload": {"type": "token_count", "info": None}}])
     result = collect_usage(log, project, codex_home=home)
-    assert result["sessions_with_usage"] == 0 and result["collection_status"] == "partial"
+    assert result["sessions_with_usage"] == 0 and result["collection_status"] == "unavailable"
     assert not log.exists()
     assert collect_usage(log, project, codex_home=tmp_path / "absent")["files_scanned"] == 0
 

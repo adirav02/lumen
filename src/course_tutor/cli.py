@@ -71,6 +71,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument("--query", "-q", help="Search query")
     parser.add_argument("--request-id", "-r", help="Stable request ID for idempotent mutations")
 
+    parser.add_argument("--usage-log-location", action="append", help="Repeatable Codex log file/directory; may be outside project")
     parser.add_argument("--audience", choices=("tutor", "student"), default="tutor")
     args = parser.parse_args(argv)
 
@@ -129,6 +130,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             params = {"log_path": ws_path / "usage.jsonl",
                       "project_path": payload.get("project_path", Path.cwd()),
                       "codex_home": payload.get("codex_home"),
+                      "log_locations": args.usage_log_location or payload.get("log_locations"),
                       "antigravity_app_home": payload.get("antigravity_app_home"),
                       "claude_home": payload.get("claude_home"), "hosts": payload.get("hosts")}
             if op == "watch_usage":

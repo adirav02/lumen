@@ -154,7 +154,16 @@ def _collect_claude_usage(log_path, project_path, claude_home=None):
             "pending_tails": pending, "errors": errors, "collection_status": "partial"}
 
 
-def collect_usage(log_path, project_path, *, codex_home=None, session_files=None, claude_home=None, hosts=None, antigravity_app_home=None):
+def collect_usage(log_path, project_path, *, codex_home=None, session_files=None, claude_home=None, hosts=None, antigravity_app_home=None, log_locations=None):
+    from .usage_locations import log_files
+    try:
+        configured_files = log_files(log_locations)
+    except (ValueError, OSError) as exc:
+        raise ValidationError(str(exc)) from None
+    if configured_files is not None:
+        if session_files is not None:
+            raise ValidationError("Choose log_locations or session_files, not both.")
+        session_files = configured_files
     hosts = ["codex", "claude", "antigravity"] if hosts is None else hosts
     if not isinstance(hosts, list) or not hosts or any(not isinstance(host, str) or host not in {"codex", "claude", "antigravity", "antigravity-app"} for host in hosts):
         raise ValidationError("hosts must select codex, claude, antigravity and/or antigravity-app.")
@@ -174,14 +183,22 @@ def collect_usage(log_path, project_path, *, codex_home=None, session_files=None
                       "files_scanned": 0, "sessions_with_usage": len(sessions), "snapshots_appended": 0,
                       "snapshots_replayed": 0, "pending_tails": 0, "errors": [], "collection_status": "partial"}
         reports.append(report)
-    return {"host": hosts[0] if len(hosts) == 1 else "all", "hosts": reports,
+    available = sum(r['sessions_with_usage'] for r in reports)
+    state = ('unavailable' if not available else 'partial' if any(
+        not r['sessions_with_usage'] or r['errors'] or r['pending_tails'] for r in reports) else 'measured')
+    scope = ('Configured project-matched log snapshots only; not per-task, per-request or billing totals. '
+             'Missing hosts, pending tails or parse errors limit partial reports.')
+    return {"usage_state": state, "scope_limit": scope,
+            "usage": None if not available else {"scope": "session_snapshots", "log_path": str(log_path)},
+            "unavailable_reason": "No matching logs with usable counters." if not available else None,
+            "host": hosts[0] if len(hosts) == 1 else "all", "hosts": reports,
             **{key: sum(r[key] for r in reports) for key in ("files_scanned", "sessions_with_usage", "snapshots_appended", "snapshots_replayed", "pending_tails")},
             "errors": [{"host": r["host"], **error} for r in reports for error in r["errors"]],
-            "collection_status": "partial", "log_path": str(log_path), "project_path": str(Path(project_path).resolve()),
+            "collection_status": state, "log_path": str(log_path), "project_path": str(Path(project_path).resolve()),
             "limits": "Snapshot scopes differ by host/source. Native callbacks must be configured; missing callbacks or logs are not zero usage. No billing, hidden retry or image completeness claims."}
 
 
-def watch_usage(log_path, project_path, *, poll_seconds=5, duration_seconds=None, codex_home=None, claude_home=None, hosts=None, antigravity_app_home=None, emit=print):
+def watch_usage(log_path, project_path, *, poll_seconds=5, duration_seconds=None, codex_home=None, claude_home=None, hosts=None, antigravity_app_home=None, log_locations=None, emit=print):
     if type(poll_seconds) not in (int, float) or not 0.05 <= poll_seconds <= 30:
         raise ValidationError("poll_seconds must be between 0.05 and 30.")
     for name, value in (("poll_seconds", poll_seconds), ("duration_seconds", duration_seconds)):
@@ -191,7 +208,7 @@ def watch_usage(log_path, project_path, *, poll_seconds=5, duration_seconds=None
     previous = None
     try:
         while True:
-            result = collect_usage(log_path, project_path, codex_home=codex_home, claude_home=claude_home, hosts=hosts, antigravity_app_home=antigravity_app_home)
+            result = collect_usage(log_path, project_path, codex_home=codex_home, claude_home=claude_home, hosts=hosts, antigravity_app_home=antigravity_app_home, log_locations=log_locations)
             summary = summarize_usage(log_path)
             state = (result["sessions_with_usage"], result["pending_tails"], result["errors"], summary["events"])
             if previous is None or result["snapshots_appended"] or state != previous:
