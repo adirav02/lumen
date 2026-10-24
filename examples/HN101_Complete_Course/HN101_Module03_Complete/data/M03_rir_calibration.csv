@@ -1,0 +1,4 @@
+case_id,estimated_rir,supplied_additional_valid_reps
+RIR-A,2,4
+RIR-B,3,1
+RIR-C,1,1

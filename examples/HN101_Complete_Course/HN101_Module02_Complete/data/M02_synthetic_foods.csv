@@ -1,0 +1,4 @@
+food_id,state,basis_g,protein_g,carbohydrate_g,fat_g
+GRAIN-DRY,dry,100,8,76,2
+GRAIN-COOKED,cooked,100,3,28,0.5
+POWDER-A,powder,100,80,8,6

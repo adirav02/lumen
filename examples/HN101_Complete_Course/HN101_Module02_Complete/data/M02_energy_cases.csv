@@ -1,0 +1,7 @@
+case_id,estimated_tdee_kcal_day,planned_change_percent,planned_intake_kcal_day,status
+CUT-A,2800,-20,2240.0,synthetic_assumption
+CUT-B,2800,-15,2380.0,synthetic_assumption
+CUT-C,2600,-20,2080.0,synthetic_assumption
+BULK-A,2800,5,2940.0,synthetic_assumption
+BULK-B,2800,10,3080.0,synthetic_assumption
+BULK-C,2800,15,3220.0,synthetic_assumption

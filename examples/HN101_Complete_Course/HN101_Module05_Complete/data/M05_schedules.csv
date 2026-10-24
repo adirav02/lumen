@@ -1,0 +1,4 @@
+case_id,resistance_start,resistance_end,cardio_start,cardio_end,provenance
+SCHED-A,18:00,19:00,21:00,21:30,synthetic_same_day
+SCHED-B,18:00,19:00,18:45,19:15,synthetic_same_day
+SCHED-C,18:00,19:00,19:00,19:30,synthetic_same_day

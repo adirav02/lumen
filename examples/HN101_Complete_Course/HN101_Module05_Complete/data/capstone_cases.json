@@ -1,0 +1,30 @@
+[
+  {
+    "case_id": "CAP-A",
+    "body_mass_kg": 80,
+    "height_cm": 180,
+    "age_years": 25,
+    "MSJ_branch_constant": 5,
+    "estimated_body_fat_percent": 20,
+    "activity_multiplier": 1.55,
+    "TDEE_override_kcal": null,
+    "intake_change_percent": -10,
+    "protein_g_per_kg_BW": 1.8,
+    "fat_g_per_kg_BW": 0.8,
+    "provenance": "synthetic_scenario"
+  },
+  {
+    "case_id": "CAP-B",
+    "body_mass_kg": 80,
+    "height_cm": 180,
+    "age_years": 25,
+    "MSJ_branch_constant": 5,
+    "estimated_body_fat_percent": 20,
+    "activity_multiplier": 1.55,
+    "TDEE_override_kcal": 2800,
+    "intake_change_percent": -10,
+    "protein_g_per_kg_BW": 1.8,
+    "fat_g_per_kg_BW": 0.8,
+    "provenance": "synthetic_scenario"
+  }
+]

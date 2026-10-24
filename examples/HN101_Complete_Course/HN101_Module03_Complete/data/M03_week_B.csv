@@ -1,0 +1,11 @@
+session_id,exercise_id,completed_work_sets,assigned_direct_target,assigned_indirect_target
+U1,bench_press,3,chest,triceps
+U1,row,3,back,biceps
+U1,curl,4,biceps,
+U2,incline_press,3,chest,triceps
+U2,pulldown,3,back,biceps
+U2,pressdown,2,triceps,
+L1,squat,3,quads,not_assigned
+L1,leg_curl,3,hamstrings,
+L2,squat,3,quads,not_assigned
+L2,leg_curl,3,hamstrings,

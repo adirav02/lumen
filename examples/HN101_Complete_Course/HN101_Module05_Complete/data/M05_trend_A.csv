@@ -1,0 +1,15 @@
+case_id,day,mass_kg,assigned_intake_kcal,provenance
+TREND-A,1,80.4,2517.975,synthetic_not_measured
+TREND-A,2,80.2,2517.975,synthetic_not_measured
+TREND-A,3,80.3,2517.975,synthetic_not_measured
+TREND-A,4,80.1,2517.975,synthetic_not_measured
+TREND-A,5,80.0,2517.975,synthetic_not_measured
+TREND-A,6,80.2,2517.975,synthetic_not_measured
+TREND-A,7,80.2,2517.975,synthetic_not_measured
+TREND-A,8,80.0,2517.975,synthetic_not_measured
+TREND-A,9,79.9,2517.975,synthetic_not_measured
+TREND-A,10,79.8,2517.975,synthetic_not_measured
+TREND-A,11,79.9,2517.975,synthetic_not_measured
+TREND-A,12,79.7,2517.975,synthetic_not_measured
+TREND-A,13,79.8,2517.975,synthetic_not_measured
+TREND-A,14,79.5,2517.975,synthetic_not_measured

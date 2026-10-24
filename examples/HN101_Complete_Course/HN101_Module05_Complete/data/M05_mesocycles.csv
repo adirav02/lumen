@@ -1,0 +1,13 @@
+case_id,week,proposed_direct_sets,target_RIR,provenance
+MESO-A,1,8,3,synthetic_template
+MESO-A,2,9,3,synthetic_template
+MESO-A,3,10,2,synthetic_template
+MESO-A,4,10,2,synthetic_template
+MESO-A,5,11,1,synthetic_template
+MESO-A,6,6,4,synthetic_template
+MESO-B,1,10,3,synthetic_template
+MESO-B,2,11,3,synthetic_template
+MESO-B,3,12,2,synthetic_template
+MESO-B,4,12,2,synthetic_template
+MESO-B,5,13,1,synthetic_template
+MESO-B,6,7,4,synthetic_template

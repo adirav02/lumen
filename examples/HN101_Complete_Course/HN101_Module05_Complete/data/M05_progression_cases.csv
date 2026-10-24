@@ -1,0 +1,7 @@
+case_id,load_kg,increment_kg_total,sets,rep_low,rep_high,min_RIR,previous_reps,previous_RIR,current_reps,current_RIR,comparable,concern_reported,provenance
+DP-A,70,2.5,3,8,12,2,"12,12,12","2,2,2","12,12,12","2,2,2",True,False,synthetic
+DP-B,70,2.5,3,8,12,2,"12,12,12","2,2,2","12,12,10","2,2,2",True,False,synthetic
+DP-C,70,2.5,3,8,12,2,"12,12,12","2,2,2","12,12,12","0,0,0",True,False,synthetic
+DP-D,70,2.5,3,8,12,2,"12,12,12","2,2,2","12,12,12",,True,False,synthetic
+DP-E,70,2.5,3,8,12,2,"12,12,12","2,2,2","12,12,12","2,2,2",False,False,synthetic
+DP-F,70,2.5,3,8,12,2,"12,12,12","2,2,2","12,12","2,2",True,False,synthetic

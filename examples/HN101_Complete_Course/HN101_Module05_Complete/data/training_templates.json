@@ -1,0 +1,357 @@
+{
+  "3": [
+    {
+      "day": "Mon",
+      "exercise": "Squat candidate",
+      "primary_task": "knee_hip_extension",
+      "sets": 2,
+      "repetition_range": "8\u201312",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Mon",
+      "exercise": "Dumbbell bench candidate",
+      "primary_task": "press",
+      "sets": 2,
+      "repetition_range": "8\u201312",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Mon",
+      "exercise": "Chest-supported row candidate",
+      "primary_task": "horizontal_pull",
+      "sets": 2,
+      "repetition_range": "8\u201312",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Mon",
+      "exercise": "Seated curl candidate",
+      "primary_task": "knee_flexion",
+      "sets": 2,
+      "repetition_range": "10\u201315",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Mon",
+      "exercise": "Standing calf candidate",
+      "primary_task": "plantarflexion",
+      "sets": 2,
+      "repetition_range": "10\u201315",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Wed",
+      "exercise": "RDL candidate",
+      "primary_task": "hip_extension",
+      "sets": 2,
+      "repetition_range": "8\u201312",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Wed",
+      "exercise": "Overhead press candidate",
+      "primary_task": "press",
+      "sets": 2,
+      "repetition_range": "8\u201312",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Wed",
+      "exercise": "Pulldown candidate",
+      "primary_task": "vertical_pull",
+      "sets": 2,
+      "repetition_range": "8\u201312",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Wed",
+      "exercise": "Knee-extension candidate",
+      "primary_task": "knee_extension",
+      "sets": 2,
+      "repetition_range": "10\u201315",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Wed",
+      "exercise": "Cable crunch candidate",
+      "primary_task": "trunk_flexion",
+      "sets": 2,
+      "repetition_range": "10\u201315",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Fri",
+      "exercise": "Leg-press candidate",
+      "primary_task": "knee_hip_extension",
+      "sets": 2,
+      "repetition_range": "8\u201312",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Fri",
+      "exercise": "Incline press candidate",
+      "primary_task": "press",
+      "sets": 2,
+      "repetition_range": "8\u201312",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Fri",
+      "exercise": "Supported row candidate",
+      "primary_task": "horizontal_pull",
+      "sets": 2,
+      "repetition_range": "8\u201312",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Fri",
+      "exercise": "Overhead triceps candidate",
+      "primary_task": "elbow_extension",
+      "sets": 2,
+      "repetition_range": "10\u201315",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Fri",
+      "exercise": "Incline curl candidate",
+      "primary_task": "elbow_flexion",
+      "sets": 2,
+      "repetition_range": "10\u201315",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    }
+  ],
+  "4": [
+    {
+      "day": "Mon Upper1",
+      "exercise": "Bench candidate",
+      "primary_task": "press",
+      "sets": 2,
+      "repetition_range": "8\u201312",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Mon Upper1",
+      "exercise": "Pulldown candidate",
+      "primary_task": "vertical_pull",
+      "sets": 2,
+      "repetition_range": "8\u201312",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Mon Upper1",
+      "exercise": "Supported row candidate",
+      "primary_task": "horizontal_pull",
+      "sets": 2,
+      "repetition_range": "8\u201312",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Mon Upper1",
+      "exercise": "Lateral-raise candidate",
+      "primary_task": "shoulder_abduction",
+      "sets": 2,
+      "repetition_range": "10\u201315",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Mon Upper1",
+      "exercise": "Overhead triceps candidate",
+      "primary_task": "elbow_extension",
+      "sets": 2,
+      "repetition_range": "10\u201315",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Mon Upper1",
+      "exercise": "Incline curl candidate",
+      "primary_task": "elbow_flexion",
+      "sets": 2,
+      "repetition_range": "10\u201315",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Tue Lower1",
+      "exercise": "Squat candidate",
+      "primary_task": "knee_hip_extension",
+      "sets": 2,
+      "repetition_range": "8\u201312",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Tue Lower1",
+      "exercise": "RDL candidate",
+      "primary_task": "hip_extension",
+      "sets": 2,
+      "repetition_range": "8\u201312",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Tue Lower1",
+      "exercise": "Seated curl candidate",
+      "primary_task": "knee_flexion",
+      "sets": 2,
+      "repetition_range": "10\u201315",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Tue Lower1",
+      "exercise": "Knee-extension candidate",
+      "primary_task": "knee_extension",
+      "sets": 2,
+      "repetition_range": "10\u201315",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Tue Lower1",
+      "exercise": "Standing calf candidate",
+      "primary_task": "plantarflexion",
+      "sets": 2,
+      "repetition_range": "10\u201315",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Tue Lower1",
+      "exercise": "Cable crunch candidate",
+      "primary_task": "trunk_flexion",
+      "sets": 2,
+      "repetition_range": "10\u201315",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Thu Upper2",
+      "exercise": "Incline press candidate",
+      "primary_task": "press",
+      "sets": 2,
+      "repetition_range": "8\u201312",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Thu Upper2",
+      "exercise": "Pulldown candidate",
+      "primary_task": "vertical_pull",
+      "sets": 2,
+      "repetition_range": "8\u201312",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Thu Upper2",
+      "exercise": "Supported row candidate",
+      "primary_task": "horizontal_pull",
+      "sets": 2,
+      "repetition_range": "8\u201312",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Thu Upper2",
+      "exercise": "Lateral-raise candidate",
+      "primary_task": "shoulder_abduction",
+      "sets": 2,
+      "repetition_range": "10\u201315",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Thu Upper2",
+      "exercise": "Pressdown candidate",
+      "primary_task": "elbow_extension",
+      "sets": 2,
+      "repetition_range": "10\u201315",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Thu Upper2",
+      "exercise": "Curl candidate",
+      "primary_task": "elbow_flexion",
+      "sets": 2,
+      "repetition_range": "10\u201315",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Fri Lower2",
+      "exercise": "Leg-press candidate",
+      "primary_task": "knee_hip_extension",
+      "sets": 2,
+      "repetition_range": "8\u201312",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Fri Lower2",
+      "exercise": "Hip-thrust candidate",
+      "primary_task": "hip_extension",
+      "sets": 2,
+      "repetition_range": "8\u201312",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Fri Lower2",
+      "exercise": "Prone curl candidate",
+      "primary_task": "knee_flexion",
+      "sets": 2,
+      "repetition_range": "10\u201315",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Fri Lower2",
+      "exercise": "Knee-extension candidate",
+      "primary_task": "knee_extension",
+      "sets": 2,
+      "repetition_range": "10\u201315",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Fri Lower2",
+      "exercise": "Calf-raise candidate",
+      "primary_task": "plantarflexion",
+      "sets": 2,
+      "repetition_range": "10\u201315",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    },
+    {
+      "day": "Fri Lower2",
+      "exercise": "Trunk-flexion candidate",
+      "primary_task": "trunk_flexion",
+      "sets": 2,
+      "repetition_range": "10\u201315",
+      "target_RIR": 2,
+      "status": "candidate_requires_setup_ROM_and_individual_review"
+    }
+  ]
+}

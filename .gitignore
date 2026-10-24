@@ -58,8 +58,8 @@ Thumbs.db
 .idea/
 .vscode/
 
-# Learner-generated test exports in the example course collection
-/examples/real_course_test/courses/*/tests/
+# Local fictional course sources for a future learning task
+/examples/Harbor systems - semester 1/
 
 # Local development task instances; keep the shared template tracked.
 /work/*
@@ -74,3 +74,11 @@ Thumbs.db
 # Private local course material and hygiene configuration
 /.local-blocklist.txt
 /local-courses/
+
+# SQLite sidecars for all supported database filename extensions
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm

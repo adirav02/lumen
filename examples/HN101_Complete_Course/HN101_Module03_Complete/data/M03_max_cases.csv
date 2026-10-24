@@ -1,0 +1,4 @@
+case_id,load_kg,completed_reps,estimated_rir,equation_reps_input,input_status
+MAX-A,80,8,,8,near_limit_assumed
+MAX-B,80,10,,10,near_limit_assumed
+MAX-C,80,8,2,10,completed_plus_estimated_reserve_hypothesis

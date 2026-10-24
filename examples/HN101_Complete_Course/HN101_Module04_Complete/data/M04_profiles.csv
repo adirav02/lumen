@@ -1,0 +1,7 @@
+profile_id,position,force_N,d_perpendicular_m,moment_magnitude_Nm
+PROFILE-A,start,100,0.1,10.0
+PROFILE-A,middle,100,0.3,30.0
+PROFILE-A,end,100,0.15,15.0
+PROFILE-B,start,100,0.25,25.0
+PROFILE-B,middle,100,0.2,20.0
+PROFILE-B,end,100,0.05,5.0
