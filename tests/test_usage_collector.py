@@ -154,21 +154,51 @@ def test_parallel_collectors_append_snapshot_once(tmp_path):
     assert summarize_usage(log)["events"] == 1
 
 
-def test_watch_automatically_collects_new_host_data(tmp_path):
+def test_watch_automatically_collects_new_host_data(tmp_path, watcher_clock):
     path, project, home, log = fixture(tmp_path)
     output = []
+    emitted_at = []
     def capture(result):
         output.append(result)
+        emitted_at.append(watcher_clock.monotonic())
         if len(output) == 1:
             with path.open("a") as stream:
                 stream.write(json.dumps(event(200, timestamp="2026-10-19T00:05:00Z"))+"\n")
-    result = watch_usage(log, project, codex_home=home, duration_seconds=.15, poll_seconds=.05, emit=capture)
-    assert result["stopped"] == "duration"
+    result = watch_usage(log, project, hosts=["codex"], codex_home=home, duration_seconds=.15, poll_seconds=.05, emit=capture)
+    assert result == {"stopped": "duration", "log_path": str(log)}
     assert len(output) == 2
-    assert summarize_usage(log)["runs"][0]["session_snapshots"][0]["input_tokens"] == 200
+    assert emitted_at == pytest.approx([0, .05])
+    assert watcher_clock.sleeps == pytest.approx([.05, .05, .05])
+    assert watcher_clock.elapsed == pytest.approx(.15)
+    for emitted, events, inputs in zip(output, (1, 2), (100, 200)):
+        data = emitted["data"]
+        assert data["collector"]["sessions_with_usage"] == 1
+        assert data["collector"]["snapshots_appended"] == 1
+        assert data["summary"]["events"] == events
+        run, = data["summary"]["runs"]
+        assert run["run_id"] == "codex-session:session-1"
+        snapshot, = run["session_snapshots"]
+        assert snapshot["host"] == "codex"
+        assert snapshot["session_id"] == "session-1"
+        assert snapshot["input_tokens"] == inputs
+    assert summarize_usage(log) == output[-1]["data"]["summary"]
     for invalid in (None, True, float("nan"), 0, 31):
         with pytest.raises(ValidationError):
             watch_usage(log, project, poll_seconds=invalid)
+
+
+def test_watch_duration_includes_emit_time(tmp_path, watcher_clock):
+    _, project, home, log = fixture(tmp_path)
+    output = []
+    def slow_emit(result):
+        output.append(result)
+        watcher_clock.elapsed += .2  # work exhausts the original .15 budget
+    result = watch_usage(log, project, hosts=["codex"], codex_home=home,
+                         duration_seconds=.15, poll_seconds=.05, emit=slow_emit)
+    assert result == {"stopped": "duration", "log_path": str(log)}
+    assert len(output) == 1
+    assert output[0]["data"]["summary"]["events"] == 1
+    assert watcher_clock.sleeps == []
 
 
 def test_cli_collection_and_bounded_watch(tmp_path):

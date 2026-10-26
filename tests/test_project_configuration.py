@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import re
+import shlex
 
 import yaml
 
@@ -95,6 +96,23 @@ def test_ci_preserves_runtime_gates_and_isolated_distribution_smoke():
                 assert int(job['timeout-minutes']) > 0
             for step in job.get('steps', []):
                 assert 'continue-on-error' not in step
+
+
+def test_ci_installs_build_dependencies_before_test_preflight():
+    from course_tutor.doctor import declared_dependencies
+
+    ci = yaml.load((ROOT / '.github/workflows/ci.yml').read_text(), Loader=yaml.BaseLoader)
+    installed = set()
+    for step in ci['jobs']['test']['steps']:
+        command = step.get('run', '')
+        if 'python scripts/run_tests.py' in command:
+            break
+        for line in command.splitlines():
+            tokens = shlex.split(line)
+            if tokens[:4] == ['python', '-m', 'pip', 'install']:
+                installed.update(tokens[4:])
+    required = {spec for spec, group in declared_dependencies() if group == 'build'}
+    assert required <= installed, f'CI preflight requires explicit installation of {required - installed}'
 
 
 def test_workflow_embedded_shell_parses_and_release_cannot_rebuild_artifacts(tmp_path):

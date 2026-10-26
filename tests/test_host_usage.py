@@ -250,12 +250,41 @@ def test_measured_launcher_captures_only_result_not_steps(tmp_path):
     assert snap["input_tokens"] == 5 and snap["output_tokens"] == 4
 
 
-def test_watcher_observes_native_callbacks_between_polls(tmp_path):
+def test_watcher_observes_native_callbacks_between_polls(tmp_path, watcher_clock):
     log = tmp_path/"usage.jsonl"
     output = []
+    emitted_at = []
+    captured = []
     def emit(result):
         output.append(result)
+        emitted_at.append(watcher_clock.monotonic())
         if len(output) == 1:
-            capture_statusline(log, tmp_path, "antigravity", status(tmp_path))
-    watch_usage(log, tmp_path, hosts=["antigravity"], duration_seconds=.15, poll_seconds=.05, emit=emit)
+            assert result["data"]["summary"]["events"] == 0
+            assert result["data"]["summary"]["runs"] == []
+            captured.append(capture_statusline(log, tmp_path, "antigravity", status(tmp_path)))
+            assert captured[0]["replayed"] is False
+            assert summarize_usage(log)["events"] == 1
+    result = watch_usage(log, tmp_path, hosts=["antigravity"], duration_seconds=.15, poll_seconds=.05, emit=emit)
+    assert result == {"stopped": "duration", "log_path": str(log)}
     assert len(output) == 2
+    assert emitted_at == pytest.approx([0, .05])
+    # Polls at .10 and .15 see unchanged data and must not emit duplicates.
+    assert watcher_clock.sleeps == pytest.approx([.05, .05, .05])
+    assert watcher_clock.elapsed == pytest.approx(.15)
+    first, updated = [item["data"] for item in output]
+    assert first["collector"]["sessions_with_usage"] == 0
+    assert updated["collector"]["sessions_with_usage"] == 1
+    assert updated["collector"]["snapshots_appended"] == 0  # callback wrote it
+    summary = updated["summary"]
+    assert summary["events"] == 1
+    run, = summary["runs"]
+    assert run["run_id"] == "antigravity-session:session-1"
+    snapshot, = run["session_snapshots"]
+    assert snapshot == captured[0]["event"]
+    assert snapshot["host"] == "antigravity"
+    assert snapshot["session_id"] == "session-1"
+    assert snapshot["usage_scope"] == "context_window"
+    assert snapshot["input_tokens"] == 300
+    assert snapshot["output_tokens"] == 50
+    assert snapshot["estimated_cost_usd"] == .04
+    assert summarize_usage(log) == summary

@@ -40,7 +40,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
+          python -m pip install --upgrade pip "setuptools>=61.0" wheel
           python -m pip install -e ".[dev]"
 
       - name: Check documentation and generated agent profiles
