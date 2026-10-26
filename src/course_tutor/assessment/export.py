@@ -113,7 +113,7 @@ def render_paper_html(paper):
         if source:
             labels = list(dict.fromkeys(span.get('label', '') for span in source['source_spans'] if span.get('label')))
             location = ', '.join(labels[:2]) + (' … '+labels[-1] if len(labels)>2 else '')
-            citation = f"{source['original_filename']} | v{source['version_num']} | {source['question_key']} | {location}"
+            citation = f"{source['original_filename']} | v{source['version_num']} | {location}"
         else:
             citation = 'Generated question'
         heading = question_label+' '+str(question['item_order'])

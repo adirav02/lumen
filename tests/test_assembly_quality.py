@@ -64,6 +64,10 @@ def test_hn_numbering_instructions_duration_points_and_fields(hn):
         assert text in html
     assert 'Question 4 Acute' not in html
     assert len(re.findall(r'<h2>Question \d+', html)) == 8
+    # Printed citations identify the source/version/pages without its question
+    # numbers; the saved paper above retains the exact private mapping.
+    assert 'HN-FE03_student.pdf | v1 | Page' in html
+    assert not re.search(r'HN-FE03_student\.pdf \| v1 \| \d+ \|', html)
     # Immutable originals and saved source question text retain their headings.
     assert hn.student_preview('hn', qs['4'])['question_text'].startswith('Question 4 Acute')
 
