@@ -1,5 +1,7 @@
 """File format extractors for text, PDF, and PPTX with quality and uncertainty flags."""
 
+import hashlib
+
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List
@@ -19,13 +21,23 @@ class TextExtractor:
     """Extracts plain text and markdown files."""
 
     def extract(self, file_path: Path) -> List[ExtractedSection]:
+        original = file_path.read_bytes()
         try:
-            content = file_path.read_text(encoding="utf-8")
+            content = original.decode('utf-8')
         except UnicodeDecodeError:
-            content = file_path.read_text(encoding="latin-1", errors="replace")
+            content = original.decode('latin-1', errors='replace')
+        content = content.replace('\r\n', '\n').replace('\r', '\n')
+        original_hash = hashlib.sha256(original).hexdigest()
+
+        def provenance(sections):
+            for section in sections:
+                section.metadata.update(original_sha256=original_hash,
+                    extracted_text_sha256=hashlib.sha256(section.text.encode('utf-8')).hexdigest(),
+                    text_normalization='Decoded text; universal LF line endings, heading sections and trimmed section boundaries. Original bytes unchanged.')
+            return sections
 
         if not content.strip():
-            return [ExtractedSection(0, "Full Document", "", quality_flag="empty", notes="Empty text file")]
+            return provenance([ExtractedSection(0, "Full Document", "", quality_flag="empty", notes="Empty text file")])
 
         # Split into logical sections by major markdown headings if present
         lines = content.splitlines()
@@ -60,7 +72,7 @@ class TextExtractor:
                 )
             )
 
-        return sections or [ExtractedSection(0, "Document", content, quality_flag="clean")]
+        return provenance(sections or [ExtractedSection(0, "Document", content, quality_flag="clean")])
 
 
 class PDFExtractor:

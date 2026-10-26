@@ -146,6 +146,8 @@ class QuestionCatalog:
                 self.con.execute('INSERT OR IGNORE INTO exam_catalog_aliases VALUES (?,?)', (source_version_id, duplicate[0]))
                 return self.exam_status(course_id, source_version_id)
         if existing and questions is None:
+            from .constraints import apply_known
+            apply_known(self.con, course_id)
             return self.exam_status(course_id, source_version_id)
         if exam_label is not None:
             require_text(exam_label, "exam_label")
@@ -242,6 +244,8 @@ class QuestionCatalog:
                 self.con.execute('UPDATE question_occurrences SET metadata_json=? WHERE exercise_version_id=?',
                                  (json.dumps(provenance), ver_id))
             added += 1
+        from .constraints import apply_known
+        apply_known(self.con, course_id)
         if added:
             self.con.execute("UPDATE exam_catalogs SET status='pending_review',revision=revision+1 WHERE source_version_id=?", (source_version_id,))
         return self.exam_status(course_id, source_version_id)

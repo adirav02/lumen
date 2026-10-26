@@ -43,7 +43,7 @@ def test_versions_and_dependencies_and_unknown_implementations(monkeypatch):
     monkeypatch.setattr(processing, 'UNIT_BUILDER_VERSION', '2')
     assert identity().fingerprint != original.fingerprint
     unit_changed = identity()
-    monkeypatch.setattr(processing, 'CATALOG_VERSION', '2')
+    monkeypatch.setattr(processing, 'CATALOG_VERSION', processing.CATALOG_VERSION+'-changed')
     assert identity().fingerprint != unit_changed.fingerprint
     catalog_changed = identity()
     monkeypatch.setattr(processing.platform, 'python_version', lambda: '99.1.0')

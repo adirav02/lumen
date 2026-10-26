@@ -452,7 +452,10 @@ class LumenCore:
             result['course_directory'] = None
             result['directory_issue'] = str(exc)
         for row in rows:
-            entry = {'assessment_id': row['id'], 'title': row['title'], 'learner_id': row['learner_id']}
+            from .storage.repositories import ReservationRepository
+            terminal = ReservationRepository(self.con).get(row['id'])
+            entry = {'assessment_id': row['id'], 'title': row['title'], 'learner_id': row['learner_id'],
+                     'export_status': 'superseded' if terminal else 'current'}
             if result['course_directory']:
                 path = test_directory(self.con, self.workspace_root, course_id, row['id'])/'test.pdf'
                 entry.update(pdf_path=str(path), pdf_exists=path.is_file())
@@ -779,6 +782,11 @@ class LumenCore:
         return self._question_mutation("catalog_exam_questions", course_id, request_id,
             dict(source_version_id=source_version_id, questions=questions, exam_label=exam_label), QuestionCatalog, "catalog")
 
+    def apply_known_question_constraints(self, course_id, request_id=None):
+        from .questions.constraints import apply_known
+        return self._execute_idempotent(request_id, 'apply_known_question_constraints', course_id, {},
+                                        lambda: apply_known(self.con, course_id))
+
     def annotate_question(self, course_id, occurrence_id, expected_revision, metadata, solution_links=None, request_id=None):
         return self._question_mutation('annotate_question', course_id, request_id,
             dict(occurrence_id=occurrence_id, expected_revision=expected_revision, metadata=metadata, solution_links=solution_links), QuestionReview, 'annotate')
@@ -1031,10 +1039,33 @@ class LumenCore:
         job = AssemblyRepository(self.con).get_by_assessment(assessment_id)
         if job is not None:
             from .assessment.assembly import export_saved_assessment
-            return export_saved_assessment(self, job, output_directory)
-        from .course_layout import test_directory
-        destination = output_directory or test_directory(self.con, self.workspace_root, paper['course_id'], paper['assessment_id'])
-        return export_paper(paper, destination)
+            result = export_saved_assessment(self, job, output_directory)
+        else:
+            from .course_layout import test_directory
+            destination = output_directory or test_directory(self.con, self.workspace_root, paper['course_id'], paper['assessment_id'])
+            result = export_paper(paper, destination)
+        from .assessment.retirement import export_status
+        return {**result, **export_status(self, assessment_id, result.get('pdf_path') and Path(result['pdf_path']).parent)}
+
+    def supersede_export(self, course_id, assessment_id, output_directory, request_id, replacement_assessment_id=None):
+        from .assessment.retirement import mark_directory, validate_directory
+        if not isinstance(request_id, str) or not request_id.strip():
+            raise ValidationError('supersede_export requires a stable request_id.')
+        assessment = AssessmentRepository(self.con).get_assessment(assessment_id)
+        if not assessment or assessment.course_id != course_id:
+            raise ValidationError('Assessment not found in the requested course.')
+        if replacement_assessment_id is not None:
+            replacement = AssessmentRepository(self.con).get_assessment(replacement_assessment_id)
+            if not replacement or replacement.course_id != course_id or replacement_assessment_id == assessment_id:
+                raise ValidationError('Replacement must be another assessment in this course.')
+        output = str(Path(output_directory).resolve())
+        validate_directory(output, assessment_id)
+        params = dict(assessment_id=assessment_id, output_directory=output,
+                      replacement_assessment_id=replacement_assessment_id)
+        result = self._execute_idempotent(request_id, 'supersede_export', course_id, params,
+            lambda: {**params, 'export_status': 'superseded'})
+        mark_directory(output, assessment_id, result['data'])
+        return result
 
     def start_assessment_item_attempt(
         self,

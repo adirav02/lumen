@@ -58,9 +58,13 @@ class DiagnosticService:
             raise CourseNotFoundError(course_id)
         if blueprint is not None and not isinstance(blueprint, dict):
             raise ValidationError("Assessment blueprint must be an object.")
+        from .readiness import validate_paper_settings
+        validate_paper_settings(blueprint or {})
         if learner_id is not None and (not isinstance(learner_id, str) or not learner_id.strip()):
             raise ValidationError("learner_id must be a non-empty string.")
 
+        from ..questions.constraints import paper_settings
+        blueprint = paper_settings(self.con, selected_exercise_version_ids or [], blueprint)
         assessment_id = str(uuid.uuid4())
         assessment = Assessment(
             id=assessment_id,
@@ -116,6 +120,11 @@ class DiagnosticService:
                 items.append(item)
                 item_order += 1
 
+        from ..questions.constraints import load, ordered_selection
+        selected = [item.exercise_version_id for item in items]
+        ordered = ordered_selection(selected, load(self.con, course_id))
+        if ordered is None or ordered != selected:
+            raise ValidationError('Selection has missing/forward prerequisites, stale constraints or answer disclosures.')
         self.assessment_repo.create_assessment(assessment, items)
 
         return {

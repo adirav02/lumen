@@ -4,6 +4,7 @@ Inputs are approved stems with their necessary setup/data already incorporated.
 Never expand to originals, extracted sections, solution links or private references.
 """
 from pathlib import Path
+import re
 from .errors import ValidationError
 from .storage.repositories import ExerciseRepository
 
@@ -34,8 +35,21 @@ def student_question(question):
     return public
 
 
+def paper_question_text(question):
+    text = question['question_text']
+    if question.get('source_reference'):
+        # Only the leading source heading; never numbers inside the stem.
+        text = re.sub(
+            r'\A\s*(?:\#{1,6}\s*)?(?:\*\*)?(?:(?:Question|Problem|שאלה)\s+\d+(?!\d)(?:[.):–—-]\s*|\s+)|\d+[.)]\s+)',
+            '', text, count=1, flags=re.I)
+        text = re.sub(
+            r'(?m)^\s*[A-Z][A-Z0-9_-]*[-_]Q\d+\s*\|\s*\d+(?:\.\d+)?\s+points[^\n]*\n?',
+            '', text, count=1)
+    return text
+
+
 def student_paper(paper):
-    return {**{key: paper[key] for key in ('assessment_id', 'course_id', 'title') if key in paper},
+    return {**{key: paper[key] for key in ('assessment_id', 'course_id', 'title', 'duration_minutes', 'instructions') if key in paper},
             'questions': [student_question(q) for q in paper['questions']]}
 
 

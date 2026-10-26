@@ -42,7 +42,9 @@ def assembly_paper(con, job):
     if not questions:
         raise ValidationError('Assessment contains no selected questions.')
     return student_paper({'assessment_id': job['assessment_id'], 'course_id': job['course_id'],
-            'title': job['generation'].get('title') or 'Exam', 'questions': questions})
+            'title': job['generation'].get('title') or 'Exam',
+            **{k: job['generation'].get('effective_blueprint', job['generation']['blueprint'])[k] for k in ('instructions', 'duration_minutes')
+               if k in job['generation'].get('effective_blueprint', job['generation']['blueprint'])}, 'questions': questions})
 
 
 def assessment_paper(con, assessment_id, course_id=None):
@@ -72,7 +74,7 @@ def assessment_paper(con, assessment_id, course_id=None):
             'item_order': item.item_order, 'exercise_version_id': version.id,
             'exercise_revision': len(version.revision_history)+1,
             'exercise_content_hash': compute_exercise_version_hash(version.question_text, version.reference_solution, version.rubric, version.subparts),
-            'question_text': version.question_text,
+            'question_text': version.question_text, 'max_points': item.max_points,
             'subparts': [{'key': part if isinstance(part, str) else part.get('key', part.get('subpart_key', part.get('id'))),
                           'required': part.get('required', True) if isinstance(part, dict) else True}
                          for part in version.subparts],
@@ -84,4 +86,6 @@ def assessment_paper(con, assessment_id, course_id=None):
     if not questions:
         raise ValidationError('Assessment contains no selected questions.')
     return student_paper({'assessment_id': assessment.id, 'course_id': assessment.course_id,
-            'title': assessment.title, 'questions': sorted(questions, key=lambda q:q['item_order'])})
+            'title': assessment.title,
+            **{k: assessment.blueprint[k] for k in ('instructions', 'duration_minutes')
+               if k in (assessment.blueprint or {})}, 'questions': sorted(questions, key=lambda q:q['item_order'])})

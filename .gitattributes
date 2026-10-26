@@ -5,3 +5,6 @@
 
 # Unified diff context lines must retain their leading space on empty lines.
 docs/lumen-skill-audit.patch -whitespace
+
+# Course originals retain uploaded line endings, including CSV CRLF bytes.
+examples/HN101_Complete_Course/** -text

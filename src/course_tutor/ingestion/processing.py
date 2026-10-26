@@ -18,11 +18,11 @@ from .extractors import (
 from .docx import DOCXExtractor
 
 EXTRACTOR_VERSIONS = {
-    TextExtractor: "1", PDFExtractor: "1", PPTXExtractor: "1",
+    TextExtractor: "2", PDFExtractor: "1", PPTXExtractor: "1",
     DOCXExtractor: "1", VisualOnlyExtractor: "1", UnsupportedExtractor: "1",
 }
 UNIT_BUILDER_VERSION = "1"
-CATALOG_VERSION = "1"
+CATALOG_VERSION = "2"
 
 
 def canonical_json(value):
