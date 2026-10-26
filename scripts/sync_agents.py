@@ -1,10 +1,10 @@
-# TL;DR: Generate development profiles and merge only the marked AGENTS section.
+# TL;DR: Retire generated development profiles and sync the solo instruction section.
 # Status: active; date: 2026-10-19.
-"""Sync agent source profiles; --check performs no writes."""
+"""Disable development subagent deployment; --check performs no writes."""
 import argparse
 from pathlib import Path
 from _agent_render import MARK, merge_section, outputs
-from _agent_sources import sources
+from _agent_sources import RETIRED_ROLES, sources
 from _devtools import ROOT, write_generated
 
 
@@ -16,7 +16,7 @@ def sync(root, check=False):
     updated = merge_section(old, section)
     retired = [root / folder / (role + suffix)
                for folder, suffix in (('.codex/agents', '.toml'), ('.claude/agents', '.md'))
-               for role in ('explorer', 'worker', 'planner', 'reviewer')
+               for role in RETIRED_ROLES
                if (root / folder / (role + suffix)).exists()]
     for path in retired:
         if MARK not in '\n'.join(path.read_text().splitlines()[:15]):
@@ -30,15 +30,18 @@ def sync(root, check=False):
             print(f'OBSOLETE generated profile {path}')
             ok = False
         else:
-            path.unlink()
+            try:
+                path.unlink()
+            except OSError as exc:
+                print(f'BLOCKED removing generated profile {path}: {exc}')
+                ok = False
     if old != updated:
         if check:
             print('OUTDATED AGENTS.md generated section')
             ok = False
         else:
             agents.write_text(updated)
-    print('TODO Claude: verify requested model IDs and native reasoning override.')
-    print('TODO AGY: verify native development-profile format; Gemini 3.8 Flash tiers are set.')
+    print('Solo instructions synced; development subagent deployment disabled.')
     return ok
 
 

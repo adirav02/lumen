@@ -32,7 +32,7 @@ def repo(tmp_path):
     return tmp_path
 
 
-def test_sync_check_idempotence_preservation_and_reasoning(repo):
+def test_sync_check_idempotence_preservation_and_solo(repo):
     before = (repo / 'AGENTS.md').read_text()
     run(repo, 'sync_agents.py', '--check', ok=False)
     assert not (repo / '.codex').exists()
@@ -40,6 +40,9 @@ def test_sync_check_idempotence_preservation_and_reasoning(repo):
     legacy = repo / '.claude/agents/course-existing.md'
     legacy.parent.mkdir(parents=True)
     legacy.write_text('Legacy profile, keep verbatim.\n')
+    # Copying an archived role back must not silently re-enable deployment.
+    shutil.copyfile(ROOT / 'archive/delegated-agents/dev_explorer.md',
+                    repo / 'agents/dev_explorer.md')
     run(repo, 'sync_agents.py')
     assert (repo / 'AGENTS.md').read_text().startswith(before)
     snapshot = {p: p.read_bytes() for p in repo.rglob('*') if p.is_file()}
@@ -47,41 +50,31 @@ def test_sync_check_idempotence_preservation_and_reasoning(repo):
     run(repo, 'sync_agents.py', '--check')
     assert snapshot == {p: p.read_bytes() for p in repo.rglob('*') if p.is_file()}
     assert legacy.read_text() == 'Legacy profile, keep verbatim.\n'
-    for role, effort in {'dev_explorer': 'low', 'dev_worker': 'low', 'dev_planner': 'high',
-                         'dev_reviewer': 'medium'}.items():
-        native = (repo / f'.codex/agents/{role}.toml').read_text()
-        assert f'name = "{role}"' in native
-        assert f'model_reasoning_effort = "{effort}"' in native
-        assert f'name: {role}\n' in (repo / f'.claude/agents/{role}.md').read_text()
-    assert 'gpt-5.6-terra' in (repo / '.codex/agents/dev_explorer.toml').read_text()
-    assert not (repo / '.codex/agents/manager.toml').exists()
-    changed = repo / '.claude/agents/dev_worker.md'
-    changed.write_text(changed.read_text() + '\nStale\n')
-    run(repo, 'sync_agents.py', '--check', ok=False)
-    assert changed.read_text().endswith('Stale\n')
-
-
-def test_sync_refuses_unmarked_native_collision(repo):
-    path = repo / '.codex/agents/dev_explorer.toml'
-    path.parent.mkdir(parents=True)
-    path.write_text('name = "hand-maintained"\n')
-    run(repo, 'sync_agents.py', ok=False)
-    assert path.read_text() == 'name = "hand-maintained"\n'
+    assert not (repo / '.codex').exists()
+    assert not (repo / '.agents').exists()  # No AGY native output.
+    assert list((repo / '.claude/agents').iterdir()) == [legacy]
+    section = (repo / 'AGENTS.md').read_text()
+    assert 'user explicitly asks' in section
+    assert '| dev_' not in section
 
 
 @pytest.mark.parametrize('folder,suffix', [('.codex/agents', '.toml'), ('.claude/agents', '.md')])
+@pytest.mark.parametrize('role', ['dev_explorer', 'dev_worker', 'dev_planner', 'dev_reviewer',
+                                 'explorer', 'worker', 'planner', 'reviewer'])
 @pytest.mark.parametrize('generated', [True, False])
-def test_sync_retires_only_its_own_old_role_files(repo, folder, suffix, generated):
-    run(repo, 'sync_agents.py')
-    old = repo / folder / ('explorer' + suffix)
-    new = repo / folder / ('dev_explorer' + suffix)
-    content = new.read_text() if generated else 'Hand-maintained legacy role.\n'
+def test_sync_retires_only_its_own_role_files(repo, folder, suffix, role, generated):
+    old = repo / folder / (role + suffix)
+    old.parent.mkdir(parents=True, exist_ok=True)
+    content = ('# GENERATED from agents/ - edit the source\n' if generated
+               else 'Hand-maintained legacy role.\n')
     old.write_text(content)
     run(repo, 'sync_agents.py', '--check', ok=False)
-    assert old.read_text() == content  # Check mode never deletes old profiles.
+    assert old.read_text() == content
     run(repo, 'sync_agents.py', ok=generated)
     assert old.exists() != generated
-    assert new.is_file()
+    if not generated:
+        assert old.read_text() == content
+
 
 
 def test_task_create_status_archive_and_collision(repo):
@@ -129,3 +122,13 @@ def test_docs_checks_reject_invalid_files(repo, failure):
     else:
         (repo / 'docs/unindexed.json').write_text('{}')
     run(repo, 'check_docs.py', ok=False)
+
+
+def test_docs_ignore_temporary_verification_clones(repo):
+    # Both a root clone and scratch nested within the checked folders are excluded.
+    for folder in ('.tmp/clone/docs', 'docs/.tmp/clone', 'work/.tmp/clone', 'agents/.tmp/clone'):
+        path = repo / folder / 'invalid.md'
+        path.parent.mkdir(parents=True)
+        path.write_text('No headers\n' * 200)
+    run(repo, 'gen_doc_index.py')
+    run(repo, 'check_docs.py')

@@ -51,7 +51,8 @@ def test_legacy_exemption_does_not_hide_new_docs(tmp_path):
 
 def test_development_and_tutoring_boundaries():
     for role in ('dev_explorer', 'dev_worker', 'dev_planner', 'dev_reviewer', 'manager'):
-        assert 'description: Development only;' in (ROOT / f'agents/{role}.md').read_text()
+        folder = 'agents' if role == 'manager' else 'archive/delegated-agents'
+        assert 'description: Development only;' in (ROOT / folder / f'{role}.md').read_text()
     for path in (ROOT / 'src').rglob('*.py'):
         text = path.read_text()
         assert 'agents/hosts.yaml' not in text and 'agents/dev_explorer.md' not in text

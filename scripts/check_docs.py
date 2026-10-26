@@ -26,6 +26,8 @@ def check(root):
             errors.append('Missing or stale .rgignore; run scripts/check_docs.py --write-rgignore')
     for folder in ('docs', 'agents', 'work'):
         for path in sorted((root / folder).rglob('*.md')):
+            if '.tmp' in path.relative_to(root).parts:
+                continue  # Verification clones and scratch files are never documentation.
             if folder == 'docs' and path.relative_to(root).as_posix() in legacy:
                 continue  # Existing contracts keep their original layout and links.
             lines = path.read_text().splitlines()
@@ -54,6 +56,8 @@ def check(root):
         links = {unquote(link.split('#', 1)[0]) for link in
                  re.findall(r'\]\(([^)]+)\)', index.read_text())}
         for path in (root / 'docs').rglob('*'):
+            if '.tmp' in path.relative_to(root).parts:
+                continue
             if path.is_file() and path.relative_to(root / 'docs').as_posix() not in links:
                 errors.append(f'INDEX misses {path.relative_to(root)}')
     if (root / 'scripts/roadmap_manifest.json').is_file():

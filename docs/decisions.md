@@ -15,7 +15,7 @@ Status: active; date: 2026-10-19; based on commit: 935d1ab.
 | 2026-10-19 | Exempt the fixed legacy doc inventory from new layout rules | Avoid unrelated content moves, extra navigation and link risk. |
 | 2026-10-19 | Skip unverified AGY profile generation | Local CLI hooks do not prove a native subagent format. |
 | 2026-10-19 | Limits/scopes are prompt contracts | Existing formats do not prove native turn caps or filesystem isolation. |
-
 | 2026-10-20 | Default to solo for known files and testable criteria; planner only for real design ambiguity or several affected modules; one reviewer pass with criterion evidence, high-severity corrective-diff re-review only | One paired record-results run: solo 2,081,534 input / 98,686 fresh / 36 model calls / 5 of 5 criteria; delegated 2,304,994 / 140,514 / 43 / 3 of 5. Wall time about equal (302.2 vs 303.4 s). This is one pair, not general evidence of superiority; [comparison](evaluation/record-results-comparison.md). |
+| 2026-10-26 | One agent completes every task by default; delegation requires an explicit user request; archive four development profiles and require final self-check | User-reported HN101 comparison: better solo generator at about one third of the cost; delegated reviewer caught no defects. No new cost measurement is claimed. |
 
 Append dated decisions with a concrete reason. Split and link before 150 lines.

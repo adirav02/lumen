@@ -15,6 +15,9 @@ For CLI tutoring commands, read [the audited workflow](lumen-workflow.md) on dem
 
 ## Shared operating rules
 
+- One agent completes the whole task by default, including planning, tests and self-check. Delegate only when the user explicitly asks for delegation; complexity, uncertainty or review needs do not authorize subagents. Archived development profiles are inactive.
+- Before reporting completion, verify every acceptance criterion with evidence. For exam creation complete [the exam self-check](exam-self-check.md). Verification clones belong only under `.tmp/` and must be deleted in `finally`/temporary-directory cleanup, including failed or cancelled runs.
+
 - Use the same core, workspace, contracts, and assessment policy in every host. Provider auto-memory is supplementary, never authoritative learner state.
 - SQLite is authoritative for processed knowledge and learner evidence; original uploaded files remain immutable files with versioned provenance.
 - Keep uploaded originals unchanged. Cite the exact source version and page/slide for source-derived claims. Label generated content.

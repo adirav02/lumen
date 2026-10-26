@@ -29,8 +29,9 @@ personal subject-specific skills as a fallback.
 
 Requests to practice the course material use source-bound questions by default.
 Set `source_only:true`; this excludes generated exercises without a cataloged source
-occurrence. Each issued question must cite its actual source filename, version and
-page/section/question location. Do not claim coverage of material you did not retrieve.
+occurrence. Keep the actual source filename, version and page/section/question location in
+the private provenance record. Student citations may include filename/version/page,
+but must omit original source question numbers. Do not claim coverage of material you did not retrieve.
 
 Read the course brief and recorded practice history. Ask the core for checked
 candidates, optionally filtering topics and excluding the current batch:
@@ -151,6 +152,17 @@ The exporter reports `rendered_pending_visual_review`, never a fabricated visual
 approval. Record actual artifact review in the accompanying presentation manifest
 only after inspection. Corrections retain the same assessment/version and stable
 option mapping; a new test receives its own identity.
+
+## End-of-task self-check
+
+Before reporting done, the same agent completes [the exam self-check](../exam-self-check.md).
+Recompute every selected key; compare structure with blueprint and source papers;
+check dependencies and answer leakage across questions. Inspect the actual PDF for
+printed instructions/duration and absence of source numbering. Reproduce from a
+restored clone with the saved seed, try three other seeds and explain identical
+results, verify original hashes, and remove all owned cancelled-run leftovers and
+verification clones. Clones belong under `.tmp/`, never `.lumen/` or `work/`.
+Record evidence in private artifacts and keep the delivery reply short.
 
 ## Keep delivery replies minimal
 

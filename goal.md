@@ -48,6 +48,18 @@ language; reproduced questions retain their source language unless translation i
 requested. Exam composition, date limits and repetition preferences are course/user
 constraints, not fixed defaults inherited from one subject.
 
+## Agent workflow and completion
+
+One agent completes discovery, planning, implementation, testing and self-check by
+default. Delegate only when the user explicitly asks for delegation, including in
+tutoring and exam tasks. Development profiles are preserved in
+[archive/delegated-agents](archive/delegated-agents/README.md) and are not deployed.
+
+Before delivering an exam, complete [the exam self-check](docs/exam-self-check.md):
+match blueprint and source papers, recompute all keys, check question independence,
+print instructions/duration without source numbering, verify restore and seeds,
+compare original hashes, and remove cancelled-run leftovers and temporary clones.
+
 ## Non-negotiable decisions
 
 - SQLite is authoritative for processed course knowledge, attempts, evidence, assessments, and preferences. Original uploaded files remain immutable files with versioned metadata and content hashes.

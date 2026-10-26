@@ -9,7 +9,7 @@
   "ended_utc": null,
   "updated": "{{UPDATED}}",
   "based_on_commit": "{{COMMIT}}",
-  "next_step": "Complete the brief and implement solo unless delegation criteria apply.",
+  "next_step": "Complete the brief, implement and self-check in the main session.",
   "mode": "solo",
-  "reason": "Routine work can be completed in the main session."
+  "reason": "One agent completes the whole task; delegation requires an explicit user request."
 }
