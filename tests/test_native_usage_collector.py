@@ -1,4 +1,4 @@
-# TL;DR: Verify deterministic task discovery, native identity accounting and real regression.
+# TL;DR: Verify deterministic task discovery, native identity accounting and archived logs.
 # Status: active; date: 2026-10-19.
 import json
 from pathlib import Path
@@ -8,7 +8,6 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 from collect_native_usage import collect, table
-from _native_usage import discover
 
 START, END = '2026-10-19T10:00:00Z', '2026-10-19T11:00:00Z'
 
@@ -101,14 +100,26 @@ def test_counter_conflicts_and_corruption_are_errors(tmp_path):
         collect(tmp_path, root_thread='root', codex_home=tmp_path)
 
 
-def test_archived_validate_task_status_native_regression():
-    home = Path.home() / '.codex'
-    key = '01a153ca-2c94-70e0-adee-3dc92b1d73cf'
-    sessions = discover(home)
-    if key not in sessions:
-        pytest.skip('Archived validate-task-status native logs unavailable; manual check required')
-    result = collect(sessions[key]['meta']['cwd'], root_thread=key, codex_home=home,
-                     since='2026-10-19T10:57:56.397Z', until='2026-10-19T11:04:22.300Z')
-    total = result['total']
-    assert tuple(total[k] for k in ('input_tokens', 'cached_input_tokens', 'output_tokens', 'model_calls')) == (
-        2878590, 2650624, 19343, 77)
+def test_archived_logs_deduplicate_inherited_records_with_inclusive_window(tmp_path):
+    # Synthetic equivalent of archived task accounting; no developer logs required.
+    home, repo = tmp_path / 'codex', tmp_path / 'repo'
+    before, first, last, after = [usage('root') for _ in range(4)]
+    for row, identity, timestamp in zip(
+        (before, first, last, after), ('before', 'first', 'last', 'after'),
+        ('2026-10-19T09:59:59Z', START, END, '2026-10-19T11:00:01Z'),
+    ):
+        row['payload']['response_id'] = identity
+        row['timestamp'] = timestamp
+    path = log(home, repo, 'root', rows=[before, first, last, after])
+    archive = home / 'archived_sessions/root.jsonl'
+    archive.parent.mkdir()
+    archive.write_bytes(path.read_bytes())
+    # Forked logs include parent's records; only the emitting thread owns them.
+    log(home, repo, 'child', parent='root', rows=[first, last, usage('child')])
+    result = collect(repo, root_thread='root', codex_home=home, since=START, until=END)
+    assert [t['model_calls'] for t in result['threads']] == [2, 1]
+    assert {key: result['total'][key] for key in (
+        'input_tokens', 'cached_input_tokens', 'fresh_input_tokens',
+        'output_tokens', 'reasoning_output_tokens', 'model_calls',
+    )} == dict(input_tokens=300, cached_input_tokens=240, fresh_input_tokens=60,
+              output_tokens=60, reasoning_output_tokens=15, model_calls=3)

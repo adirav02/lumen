@@ -26,7 +26,7 @@ Tagged CI builds prepare draft releases while these gates remain open.
 
 ## System Requirements & Python Support
 
-- **Python**: `>= 3.10` (Tested and verified locally on **Python 3.14.8**; GitHub Actions CI matrix configured for **Python 3.10, 3.11, 3.12, 3.13, 3.14**).
+- **Python**: `>= 3.10` (Tested and verified locally on **Python 3.14.8**; GitHub Actions CI matrix configured for **Python 3.10, 3.11, 3.12, 3.13, 3.14, 3.15**).
 - **SQLite**: `>= 3.35` with FTS5 enabled.
 - **Dependencies**: `pypdf`, `python-pptx`, `pytest` (development).
 
@@ -65,12 +65,15 @@ Verification clones belong under `.tmp/` and must be deleted at the end.
 
 Run the standalone synthetic probability course demonstration:
 ```bash
-python demo.py
+.venv/bin/python demo.py
 ```
-This runs an automated end-to-end showcase:
+This self-contained demo creates synthetic text in a temporary directory, exercises
+the current core API, and removes its original and restored workspaces on exit.
+Its inputs are separate from maintained automated fixtures in `tests/fixtures/`.
+It runs an automated end-to-end showcase:
 - Capability checks
 - Course creation and topic alias configuration (English & Hebrew)
-- Course material ingestion and semantic unit extraction
+- Synthetic text ingestion and semantic unit extraction
 - Multilingual search and dependency expansion
 - Interactive attempt with graduated hints and assisted performance recording
 - Mistake correction and deterministic state recomputation
@@ -123,16 +126,17 @@ CLI capture has live evidence; Claude runtime verification is still open.
 The [broader educational evaluation](examples/educational_evaluation/README.md)
 provides 16 local reviewed cases and a protocol for future unseen host testing.
 
-Run the full automated test suite covering all failure scenarios (F01–F62) from `plan.md`, boundary concurrency tests, audit regressions, and the independent synthetic course walkthrough:
+Run the full automated suite, including provenance, extraction review, assembly and PDF privacy,
+attempt/evidence lifecycle, migrations, recovery, CLI and configuration regressions:
 ```bash
-python scripts/run_tests.py
+.venv/bin/python scripts/run_tests.py
 ```
 
 ---
 
 The independent audit fixture and full workflow can be run with:
 ```bash
-python scripts/run_tests.py tests/test_audit_course_e2e.py
+.venv/bin/python scripts/run_tests.py tests/test_audit_course_e2e.py
 ```
 See [the audit report](docs/audit-2026-10-18.md) and [the corrected tutoring workflow](docs/lumen-workflow.md).
 
@@ -204,13 +208,15 @@ establish that every question was captured.
 
 ## CI and releases
 
-GitHub Actions runs Python 3.10–3.14 tests, capabilities, the synthetic demo, and
+GitHub Actions runs Python 3.10–3.15 tests, capabilities, the synthetic demo, and
 a distribution build. Package checks install the wheel built through the source
-distribution into a clean environment and run both CLI entrypoints plus the demo
-outside the checkout. Tagged releases reuse these checks and publish those exact
-validated distributions. The tag must equal `v<version>` from package metadata
+distribution into a fresh virtual environment outside the checkout and verify both
+CLI entrypoints, source ingestion, retrieval/provenance and backup/restore.
+Tagged releases reuse these checks and attach those exact validated distributions
+to a draft release. The tag must equal `v<version>` from package metadata
 (for example, `v0.1.0`); manual release retries must select a tag.
-See [CI review and remaining checks](docs/ci-review.md).
+See [local distribution verification](docs/conventions.md#distribution-verification)
+and [CI review and remaining checks](docs/ci-review.md).
 
 For public distribution builds, run `python scripts/build_public.py`, followed by
 `python scripts/check_release_version.py`. The build wrapper removes local owner

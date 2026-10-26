@@ -73,3 +73,56 @@ def test_ci_uses_the_test_wrapper_and_preserves_junit_results():
     assert all('python -m pytest' not in command for command in commands)
     build_steps = workflow['jobs']['package']['steps']
     assert any('python scripts/build_public.py' in step.get('run', '') for step in build_steps)
+
+
+def test_ci_preserves_runtime_gates_and_isolated_distribution_smoke():
+    ci = yaml.load((ROOT / '.github/workflows/ci.yml').read_text(), Loader=yaml.BaseLoader)
+    assert ci['jobs']['test']['strategy']['matrix']['python-version'] == [
+        '3.10', '3.11', '3.12', '3.13', '3.14', '3.15']
+    commands = '\n'.join(step.get('run', '') for step in ci['jobs']['test']['steps'])
+    assert '.[dev]' in commands
+    assert 'scripts/check_docs.py' in commands and 'scripts/sync_agents.py --check' in commands
+    assert 'browser_executable' in commands and 'raise SystemExit' in commands
+    assert 'lumen capabilities' in commands and 'python demo.py' in commands
+    package = '\n'.join(step.get('run', '') for step in ci['jobs']['package']['steps'])
+    assert 'scripts/check_release_version.py' in package and 'twine check dist/*' in package
+    assert 'scripts/smoke_installed.py --wheel dist/*.whl' in package
+    assert 'examples/' not in package
+    for workflow in (ci, yaml.load((ROOT / '.github/workflows/release.yml').read_text(), Loader=yaml.BaseLoader)):
+        for job in workflow['jobs'].values():
+            assert 'continue-on-error' not in job
+            if 'uses' not in job:
+                assert int(job['timeout-minutes']) > 0
+            for step in job.get('steps', []):
+                assert 'continue-on-error' not in step
+
+
+def test_workflow_embedded_shell_parses_and_release_cannot_rebuild_artifacts(tmp_path):
+    import subprocess
+    for path in (ROOT / '.github/workflows').glob('*.yml'):
+        workflow = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
+        assert workflow['name'] and workflow['on'] and workflow['jobs']
+        for job in workflow['jobs'].values():
+            for index, step in enumerate(job.get('steps', [])):
+                if 'run' in step:
+                    script = tmp_path / f'{path.stem}-{index}.sh'
+                    script.write_text(step['run'])
+                    result = subprocess.run(['bash', '-n', str(script)], capture_output=True, text=True)
+                    assert result.returncode == 0, result.stderr
+    release = yaml.load((ROOT / '.github/workflows/release.yml').read_text(), Loader=yaml.BaseLoader)
+    job = release['jobs']['release']
+    assert 'if' not in job  # Default success() dependency gate must apply.
+    assert all('if' not in step for step in job['steps'])
+    commands = '\n'.join(step.get('run', '') for step in job['steps'])
+    assert '--verify-tag' in commands and 'dist/*' in commands and '--draft' in commands
+    assert 'build' not in commands and 'pip' not in commands
+
+
+def test_ci_uploads_compact_runner_diagnostics_even_on_failure():
+    ci = yaml.load((ROOT / '.github/workflows/ci.yml').read_text(), Loader=yaml.BaseLoader)
+    uploads = [s for s in ci['jobs']['test']['steps'] if 'actions/upload-artifact@' in s.get('uses', '')]
+    assert len(uploads) == 1
+    assert uploads[0]['if'] == '${{ always() }}'
+    config = uploads[0]['with']
+    assert set(config['path'].splitlines()) == {'test-results/*.xml', '.tmp/test-last.log'}
+    assert config['include-hidden-files'] == 'true'

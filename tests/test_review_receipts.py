@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from _test_receipt import receipt_status, save_receipt, tree_identity
+from _test_receipt import is_full_suite, receipt_status, save_receipt, tree_identity
 import run_tests
 
 
@@ -79,3 +79,20 @@ def test_wrapper_writes_success_receipt_and_clears_it_on_failure(git_repo, monke
     else:
         receipt, matches = receipt_status(git_repo)
         assert matches and receipt['passed'] == 7 and receipt['full_suite'] is False
+
+
+@pytest.mark.parametrize('args', [
+    [], ['-ra', '--junitxml=test-results/pytest.xml'], ['--junitxml', 'report.xml'],
+    ['--quiet', '--tb=short', '--color', 'no'],
+])
+def test_reporting_options_preserve_full_suite_scope(args):
+    assert is_full_suite(args) is True
+
+
+@pytest.mark.parametrize('args', [
+    ['tests/test_example.py'], ['-k', 'selected'], ['-m', 'browser'],
+    ['--deselect=tests/test_example.py::test_one'], ['--lf'], ['--collect-only'],
+    ['--ignore', 'tests/test_example.py'], ['--junitxml'], ['-x'], ['--unknown'],
+])
+def test_selection_and_unknown_options_cannot_claim_full_coverage(args):
+    assert is_full_suite(args) is False

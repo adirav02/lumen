@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 class Summary:
     def __init__(self):
         self.passed = 0
+        self.skipped = 0
         self.failures = {}
 
     def record(self, report):
@@ -36,6 +37,8 @@ class Summary:
     def pytest_runtest_logreport(self, report):
         if report.when == 'call' and report.passed:
             self.passed += 1
+        if report.skipped:
+            self.skipped += 1
         self.record(report)
 
     def pytest_collectreport(self, report):
@@ -48,7 +51,7 @@ def child(result_path, args):
     summary = Summary()
     code = pytest.main(['-q', *args], plugins=[summary])
     Path(result_path).write_text(json.dumps({
-        'passed': summary.passed, 'failures': summary.failures,
+        'passed': summary.passed, 'skipped': summary.skipped, 'failures': summary.failures,
     }))
     return int(code)
 
@@ -79,6 +82,8 @@ def main(args):
     if result.returncode == 0:
         receipt = save_receipt(ROOT, before, summary.get('passed', 0), args)
         print(f"PASS {summary.get('passed', 0)} tests")
+        if summary.get('skipped'):
+            print(f"SKIP {summary['skipped']} tests (reasons in {log_path})")
         if not receipt['tree_unchanged']:
             print('Receipt does not match: working tree changed during tests')
     else:

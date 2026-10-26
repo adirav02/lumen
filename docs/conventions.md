@@ -96,3 +96,36 @@ archive requires `done` and `Verdict: PASS` from the main agent's self-check, lo
 TL;DRs, then moves the directory. Native usage collection uses started_utc/ended_utc
 as its default task window. Retry deduplicates task IDs after interrupted logging;
 do not delete work until its archive move succeeds.
+
+## Distribution verification
+
+CI builds an sdist, builds its wheel through that sdist (the default `build`
+frontend behavior), anonymizes archive ownership/timestamps, and checks metadata
+and tag identity before installing the wheel. Run locally with the development
+environment's Python and installed `build`/`twine` tools:
+
+```sh
+.venv/bin/python scripts/build_public.py
+.venv/bin/python -m twine check dist/*
+.venv/bin/python scripts/check_release_version.py
+.venv/bin/python scripts/smoke_installed.py --wheel dist/*.whl
+```
+
+Use an empty `dist/` before building; the identity check rejects multiple wheels
+or sdists. For an offline smoke install, add `--wheelhouse /path/to/wheels` with
+all runtime dependency wheels. The smoke creates a fresh venv without system
+packages, runs `pip check`, and copies only its probe and tracked synthetic text
+outside the checkout. Isolated Python imports must resolve both package aliases
+inside that venv. Both CLI entrypoints, idempotent course creation, ingestion,
+assumptions/prerequisites, immutable provenance and backup/restore are asserted.
+All temporary workspaces are removed on success or failure. `TMPDIR` must point
+outside the checkout for this probe. No private materials or service APIs are used.
+
+The Python 3.10–3.15 CI matrix requires a supported PDF browser before running
+the full suite; local PDF checks may skip when none is installed. The test wrapper
+reports skips and preserves their reasons in `.tmp/test-last.log`; CI uploads the
+log with per-version JUnit XML even after failure. Rendering tests do not replace
+human visual review. Release preparation reuses these gates and exact validated
+artifacts with read-only build permissions; only the draft-release job can write.
+Hosted runs, matrix compatibility and repository branch protections need separate
+GitHub verification; a local run establishes only its actual Python/environment.

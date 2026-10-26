@@ -1,0 +1,16 @@
+### Definition: Conditional Probability
+Content: P(A|B) = P(A intersection B) / P(B).
+Assumptions: P(B) > 0
+Symbols: P(A|B) = conditional probability
+Exceptions: Undefined when P(B) = 0
+
+### Theorem: Law of Total Probability
+Content: P(B) = P(B|A)P(A) + P(B|not A)P(not A).
+Assumptions: 0 < P(A) < 1
+Dependencies: Conditional Probability
+
+### Theorem: Bayes' Theorem
+Content: P(A|B) = P(B|A) * P(A) / P(B).
+Assumptions: P(B) > 0
+Symbols: P(A|B) = posterior probability
+Dependencies: Conditional Probability, Law of Total Probability

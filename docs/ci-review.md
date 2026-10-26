@@ -86,3 +86,14 @@ Local verification for this follow-up: 451 tests passed on Python 3.14, includin
 real browser PDF checks; documentation/profile checks, workflow YAML and embedded
 Bash syntax, the synthetic demo, an isolated sdist-to-wheel build, Twine metadata
 validation and distribution identity checks all passed.
+
+## Current-tree maintenance — 2026-10-26
+
+The package smoke no longer copies a removed example collection. It uses
+`scripts/smoke_installed.py` and the tracked `tests/fixtures/installed/lecture.txt`
+outside the checkout, with a fresh venv and import-location checks. The standalone
+demo owns inline synthetic input and cleans both workspaces. A private archive
+regression is replaced by deterministic synthetic archived logs, and the test
+wrapper reports skips. CI preserves its full log alongside JUnit artifacts.
+See [current commands and environment boundaries](conventions.md#distribution-verification).
+The Python matrix, pinned Actions, reusable release gates and draft policy remain.

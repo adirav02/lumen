@@ -38,10 +38,29 @@ def tree_identity(root):
     return {'head_commit': head, 'diff_hash': digest.hexdigest()}
 
 
+def is_full_suite(args):
+    """Reporting-only flags do not narrow coverage; unknown options stay conservative."""
+    flags = {'-q', '--quiet', '-v', '--verbose', '-ra', '-rA',
+             '--disable-warnings', '--no-header', '--no-summary'}
+    valued = {'--junitxml', '--junit-xml', '--junit-prefix', '--color', '--tb'}
+    arguments = iter(args)
+    for argument in arguments:
+        if argument in flags:
+            continue
+        if argument in valued:
+            if next(arguments, None) is None:
+                return False
+            continue
+        if '=' in argument and argument.split('=', 1)[0] in valued:
+            continue
+        return False
+    return True
+
+
 def save_receipt(root, before, passed, args):
     after = tree_identity(root)
     receipt = {**before, 'passed': passed, 'timestamp_utc': now(),
-               'args': list(args), 'full_suite': not args, 'tree_unchanged': before == after}
+               'args': list(args), 'full_suite': is_full_suite(args), 'tree_unchanged': before == after}
     write_json(Path(root) / '.tmp/test-receipt.json', receipt)
     return receipt
 

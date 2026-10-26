@@ -1,199 +1,100 @@
 #!/usr/bin/env python3
-"""Synthetic Probability Course Demo for Lumen.
-
-Demonstrates full end-to-end capabilities without external paid APIs:
-- M0: Capability check and environment reporting
-- M1: Idempotency receipts, immutable content storage, and revisions
-- M2: Multi-source ingestion (PDF/Text) and multilingual retrieval (Hebrew/English)
-- M3: Tutoring, assistance tracking, partial progress, and evidence correction
-- M4: Diagnostic blueprint execution and transparent progress reporting
-- M5: Workspace backup and restore verification with byte-for-byte fidelity
-"""
-
-import json
+"""Self-contained synthetic tutoring demo; run with the development environment's Python."""
 from pathlib import Path
-import shutil
 import tempfile
-import time
 
 from course_tutor.api import LumenCore
 
+# End-user demo data lives here, independently of the test fixture collection.
+LECTURE = """### Definition: Conditional Probability
+Content: P(A|B) = P(A intersection B) / P(B).
+Assumptions: P(B) > 0
+Symbols: P(B) = marginal probability
 
-def main():
-    print("=" * 70)
-    print("  LUMEN — Synthetic Probability Course Demo")
-    print("=" * 70)
+### Theorem: Bayes' Theorem
+Content: P(A|B) = P(B|A) * P(A) / P(B).
+Assumptions: P(B) > 0
+Symbols: P(A|B) = posterior probability
+Dependencies: Conditional Probability
+"""
 
-    demo_root = Path(tempfile.mkdtemp(prefix="lumen_demo_"))
-    print(f"\n[1] Initializing workspace at: {demo_root}")
-    core = LumenCore(demo_root)
 
-    try:
-        # Step 1: Capabilities Check
-        print("\n[2] Checking core and runtime capabilities...")
+def demonstrate(root):
+    workspace = root / 'workspace'
+    with LumenCore(workspace) as core:
         caps = core.capabilities()
-        print(f"  • Contract version: {caps['contract_version']}")
-        print(f"  • SQLite version: {caps['runtime']['sqlite_version']} (FTS5: {caps['runtime']['fts5_supported']})")
-        print(f"  • Extraction capabilities: PDF={caps['extraction_capabilities']['pdf_text']}, PPTX={caps['extraction_capabilities']['pptx_slides']}")
+        assert caps['runtime']['fts5_supported']
+        print('Runtime: SQLite', caps['runtime']['sqlite_version'], 'with FTS5')
+        course_id = core.create_course('Synthetic Probability', course_id='prob-demo',
+                                       request_id='create-course')['data']['id']
+        bayes = core.create_topic(course_id, name="Bayes' Theorem", slug='bayes')
+        core.add_topic_alias(course_id, bayes['id'], alias='משפט בייס', language='he')
+        poisson = core.create_topic(course_id, name='Poisson Distribution', slug='poisson')
+        source = root / 'lecture.txt'
+        source.write_text(LECTURE, encoding='utf-8')
+        ingested = core.ingest_source(course_id, source, role='lecture', topic_slugs=['bayes'])['data']
+        hit = next(h for h in core.search(course_id, 'משפט בייס')['results']
+                   if h['title'] == "Bayes' Theorem")
+        read = core.read_units(course_id, [hit['unit_id']], expand_dependencies=True)
+        assert read['closure_complete'] and read['total_units_returned'] == 2
+        unit = next(u for u in read['units'] if u['id'] == hit['unit_id'])
+        assert unit['assumptions'] == ['P(B) > 0']
+        assert unit['provenance'][0]['source_version_id'] == ingested['source_version_id']
+        print('Ingestion: immutable source; Hebrew retrieval; assumptions and prerequisites preserved')
 
-        # Step 2: Course Creation
-        print("\n[3] Creating course: 'redacted'...")
-        c_res = core.create_course(
-            name="redacted",
-            course_id="prob-demo",
-            scope="Undergraduate Core Course",
-            default_language="en",
-            request_id="req-create-course-1",
-        )
-        course_id = c_res["data"]["id"]
-        print(f"  • Course ID: {course_id} (Revision: {c_res['data']['revision']})")
-
-        # Step 3: Topics and Multilingual Aliases
-        print("\n[4] Registering syllabus topics with multilingual aliases (Hebrew/English)...")
-        t_bayes = core.create_topic(course_id, name="Bayes' Theorem", slug="bayes")
-        core.add_topic_alias(course_id, t_bayes["id"], alias="משפט בייס", language="he")
-        core.add_topic_alias(course_id, t_bayes["id"], alias="הסתברות מותנית", language="he")
-        core.add_topic_alias(course_id, t_bayes["id"], alias="P(A|B)", language="notation")
-
-        t_poisson = core.create_topic(course_id, name="Poisson Distribution", slug="poisson")
-        core.add_topic_alias(course_id, t_poisson["id"], alias="התפלגות פואסון", language="he")
-
-        # Step 4: Source Material Ingestion
-        print("\n[5] Ingesting lecture and slides materials...")
-        mat_dir = Path(__file__).parent / "examples" / "synthetic_probability" / "materials"
-        lecture_file = mat_dir / "lecture_bayes.txt"
-        slides_file = mat_dir / "slides_random_variables.txt"
-
-        res_lec = core.ingest_source(course_id, lecture_file, logical_name="lecture_bayes", role="lecture", topic_slugs=["bayes"])["data"]
-        print(f"  • Ingested '{res_lec['storage_relpath']}' (SHA-256: {res_lec['file_hash'][:12]}...)")
-        print(f"    Created {res_lec['units_created_count']} semantic knowledge units.")
-
-        res_slides = core.ingest_source(course_id, slides_file, logical_name="slides_rv", role="slides", topic_slugs=["poisson"])["data"]
-        print(f"  • Ingested '{res_slides['storage_relpath']}' (SHA-256: {res_slides['file_hash'][:12]}...)")
-        print(f"    Created {res_slides['units_created_count']} semantic knowledge units.")
-
-        # Step 5: Multilingual Retrieval and Dependency Expansion
-        print("\n[6] Testing multilingual retrieval and assumption preservation...")
-        # Hebrew query
-        he_search = core.search(course_id, query="הסתברות מותנית")
-        print(f"  • Hebrew query 'הסתברות מותנית' returned {he_search['results_count']} hit(s):")
-        for hit in he_search["results"]:
-            print(f"    - [{hit['kind'].upper()}] {hit['title']} (Provenance: {', '.join(hit['provenance'])})")
-
-        # Read unit with dependency expansion
-        bayes_hit = next(h for h in he_search["results"] if h["title"] == "Bayes' Theorem")
-        bayes_unit_id = bayes_hit["unit_id"]
-        unit_details = core.read_units(course_id, [bayes_unit_id], expand_dependencies=True)
-        read_unit = unit_details["units"][0]
-        print(f"  • Reading '{read_unit['title']}':")
-        print(f"    - Content: {read_unit['content'][:60]}...")
-        print(f"    - Preserved assumptions: {read_unit['assumptions']}")
-        print(f"    - Preserved symbol definitions: {read_unit['symbol_definitions']}")
-
-        # Step 6: Exercise Creation and Learner Tutoring Attempt
-        print("\n[7] Starting interactive learner attempt on diagnostic exercise...")
-        ex = core.create_exercise(
-            course_id=course_id,
-            exercise_family="bayes_medical_diagnosis",
-            question_text="A disease has prevalence 1%. Test sensitivity is 90%, specificity is 90%. Find P(Disease | Positive).",
-            topic_mappings=["bayes"],
-            skill_mappings=["bayes_calc"],
-            reference_solution="P(D|+) = (0.90*0.01) / (0.90*0.01 + 0.10*0.99) ≈ 0.083",
+        exercise = core.create_exercise(
+            course_id, 'synthetic-bayes',
+            'A condition has prevalence 1%. Sensitivity is 90%, specificity is 90%. Find P(D|+).',
+            topic_mappings=['bayes'], skill_mappings=['bayes_calc'],
+            reference_solution='0.009 / (0.009 + 0.099) = 1/12',
+            rubric={'max_points': 10},
         )
         core.validate_exercise_version(
-            ex["exercise_version_id"],
-            reference_solution="P(D|+) ≈ 0.083",
-            rubric={"criteria": "correct posterior probability", "max_points": 10},
-            checks=["verified_probabilistic_solution"],
-            expected_revision=1,
+            exercise['exercise_version_id'], expected_revision=1,
+            checks={'posterior_calculation': {'status': 'passed', 'reason': '0.009/0.108 = 1/12'}},
         )
-        att = core.start_attempt(course_id, ex["exercise_version_id"], learner_id="student_1")["data"]
-        att_id = att["id"]
-        print(f"  • Attempt started: {att_id} (Status: {att['status']})")
-
-        # Learner requests hint
-        print("  • Learner requests a hint...")
-        core.record_attempt_event(att_id, expected_revision=1, event_type="hint_request")
-        core.record_attempt_event(att_id, expected_revision=2, event_type="hint_given", content="Use Law of Total Probability for denominator P(+).")
-
-        # Learner submits correct solution
-        print("  • Learner submits answer after hint: '0.083'")
-        core.record_attempt_event(att_id, expected_revision=3, event_type="work_submission", content="P(D|+) = 0.009 / 0.108 ≈ 0.083")
-
-        # Tutor evaluates
-        print("  • Committing evidence...")
-        ev_commit = core.commit_evidence(
-            att_id,
-            evaluations=[{
-                "subpart_key": "default",
-                "topic_id": t_bayes["id"],
-                "skill_id": "bayes_calc",
-                "correct": True,
-                "rationale": "Correct application after hint.",
-            }],
-            complete_attempt=True,
-        )["data"]
-        ev = ev_commit["evidence_created"][0]
-        print(f"  • Evaluated Demonstrated Level: '{ev['demonstrated_level']}' (Assisted due to prior hint, NOT independent mastery)")
-
-        # Step 7: Course Brief and Audit Check
-        print("\n[8] Inspecting course brief and state projections...")
-        brief = core.course_brief(course_id, learner_id="student_1")
-        print(f"  • Assessed topics: {[t['name'] for t in brief['coverage']['assessed_topics']]}")
-        print(f"  • Unassessed topics: {brief['coverage']['unassessed_topics']}")
-        print(f"  • Recommended next action: {brief['recommended_next_actions'][0]['description']}")
-
-        # Step 8: Evidence Retraction (Audit History Preservation)
-        print("\n[9] Demonstrating tutor mistake retraction and state recomputation...")
-        ev_id = ev["id"]
-        corr = core.correct_evidence(
-            evidence_id=ev_id,
-            correction_reason="Rubric ambiguity identified: retracting assisted evidence to preserve strict audit integrity.",
-        )["data"]
-        recomputed = corr["recomputed_topic_states"][t_bayes["id"]]
-        print(f"  • Evidence Retracted: Audit history preserved, topic state recomputed.")
-        print(f"  • Recomputed Topic State: Independent Successes={recomputed['independent_success_count']}, Assisted Successes={recomputed['assisted_success_count']}")
-
-        # Step 9: Diagnostic Assessment Execution
-        print("\n[10] Running diagnostic assessment with topic blueprint...")
-        diag = core.create_assessment(
-            course_id=course_id,
-            title="Probability Mid-term Diagnostic",
-            blueprint={"topic_ids": [t_bayes["id"], t_poisson["id"]]},
-            selected_exercise_version_ids=[ex["exercise_version_id"]],
-        )["data"]
-        prog = core.assessment_progress(diag["assessment_id"])
-        bayes_cov = prog['topic_coverage'].get("Bayes' Theorem", {}).get('assessed')
-        poisson_cov = prog['topic_coverage'].get('Poisson Distribution', {}).get('assessed')
-        print(f"  • Topic Coverage: Bayes={bayes_cov}, Poisson={poisson_cov}")
-
-        # Step 10: Backup and Restore Verification
-        print("\n[11] Creating snapshot backup and verifying restore into clean workspace...")
-        backup_zip = demo_root / "prob_course_backup.zip"
-        b_res = core.backup(backup_zip)
-        print(f"  • Backup archive created: {backup_zip.name} ({b_res['source_count']} sources)")
-
-        # Restore into separate workspace
-        restore_dir = Path(tempfile.mkdtemp(prefix="lumen_restored_"))
-        r_res = LumenCore.restore(backup_zip, restore_dir)
-        print(f"  • Restored into: {restore_dir}")
-        print(f"  • Verified sources: {r_res['sources_verified']}, Restored courses: {r_res['courses']}")
-
-        # Validate restored core
-        restored_core = LumenCore(restore_dir)
-        restored_brief = restored_core.course_brief(course_id)
-        assert restored_brief["course"]["name"] == "redacted"
-        print("  • Restored course integrity verified byte-for-byte!")
-        restored_core.close()
-
-        print("\n" + "=" * 70)
-        print("  DEMO COMPLETE: All operations succeeded with full integrity!")
-        print("=" * 70)
-
-    finally:
-        core.close()
-        shutil.rmtree(demo_root, ignore_errors=True)
+        attempt = core.start_attempt(course_id, exercise['exercise_version_id'], learner_id='demo-learner')['data']
+        core.record_attempt_event(attempt['id'], expected_revision=1, event_type='hint_request')
+        core.record_attempt_event(attempt['id'], expected_revision=2, event_type='hint_given',
+                                  content='Include false positives in the denominator.')
+        core.record_attempt_event(attempt['id'], expected_revision=3, event_type='work_submission',
+                                  content='0.009 / (0.009 + 0.099) = 1/12')
+        evidence = core.commit_evidence(attempt['id'], evaluations=[{
+            'subpart_key': 'default', 'topic_id': bayes['id'], 'skill_id': 'bayes_calc',
+            'correct': True, 'rationale': 'Correct posterior after a hint.',
+        }], complete_attempt=True)['data']['evidence_created'][0]
+        assert evidence['demonstrated_level'] == 'assisted_success'
+        brief = core.course_brief(course_id, learner_id='demo-learner')
+        assert brief['coverage']['assessed_topics'][0]['assisted'] == 1
+        print('Learning: a correct submission after a hint records assisted success')
+        correction = core.correct_evidence(evidence['id'], correction_reason='Synthetic retraction demonstration')['data']
+        state = correction['recomputed_topic_states'][bayes['id']]
+        assert state['independent_success_count'] == state['assisted_success_count'] == 0
+        assessment = core.create_assessment(
+            course_id, title='Synthetic diagnostic',
+            blueprint={'topic_ids': [bayes['id'], poisson['id']]},
+            selected_exercise_version_ids=[exercise['exercise_version_id']],
+        )['data']
+        progress = core.assessment_progress(assessment['assessment_id'])
+        assert progress['coverage']['Poisson Distribution']['assessed'] is False
+        print('Audit: retraction recomputes state; unattempted diagnostic topics remain unassessed')
+        archive = root / 'snapshot.zip'
+        assert core.backup(archive)['source_count'] == 1
+    restored = root / 'restored'
+    assert LumenCore.restore(archive, restored)['sources_verified'] == 1
+    with LumenCore(restored) as core:
+        assert core.course_brief(course_id)['course']['name'] == 'Synthetic Probability'
+        region = core.read_source_region(ingested['source_version_id'])
+        assert region['hash_verified'] and Path(region['absolute_path']).read_bytes() == source.read_bytes()
+        assert core.read_units(course_id, [hit['unit_id']], expand_dependencies=True) == read
+    print('Backup/restore: source bytes, provenance and retrieval verified')
 
 
-if __name__ == "__main__":
+def main():
+    with tempfile.TemporaryDirectory(prefix='lumen-demo-') as directory:
+        demonstrate(Path(directory))
+    print('DEMO COMPLETE')
+
+
+if __name__ == '__main__':
     main()

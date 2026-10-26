@@ -97,3 +97,15 @@ def test_pytest_error_codes_and_logs(runner, source, args, code):
         assert result.stdout.splitlines()[0].startswith('test_sample.py')
     if code == 2:
         assert result.stdout.splitlines()[0].endswith(f'({root / "test_sample.py"}:5)')
+
+
+def test_skips_remain_visible_in_compact_summary(runner):
+    run, root = runner
+    (root / 'test_sample.py').write_text(
+        'import pytest\ndef test_optional():\n    pytest.skip("dependency unavailable")\n'
+        'def test_ok():\n    pass\n')
+    result = run('-ra')
+    assert result.returncode == 0
+    assert result.stdout.splitlines() == [
+        'PASS 1 tests', f'SKIP 1 tests (reasons in {root / ".tmp/test-last.log"})']
+    assert 'dependency unavailable' in (root / '.tmp/test-last.log').read_text()
