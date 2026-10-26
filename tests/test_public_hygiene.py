@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/check_public_hygiene.py'
+SCRIPT = Path(__file__).resolve().parents[1] / 'development/scripts/check_public_hygiene.py'
 TERM = 'synthetic' + '-private-token'
 
 

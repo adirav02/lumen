@@ -10,7 +10,7 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location("evaluate_education", ROOT / "scripts/evaluate_education.py")
+spec = importlib.util.spec_from_file_location("evaluate_education", ROOT / "development/scripts/evaluate_education.py")
 evaluation = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(evaluation)
 FIXTURES = evaluation.DEFAULT_FIXTURES

@@ -9,7 +9,7 @@ import pytest
 
 @pytest.fixture
 def wrapper(monkeypatch):
-    path = Path(__file__).resolve().parents[1] / 'scripts/run_tests.py'
+    path = Path(__file__).resolve().parents[1] / 'development/scripts/run_tests.py'
     monkeypatch.syspath_prepend(str(path.parent))
     spec = importlib.util.spec_from_file_location('run_tests', path)
     module = importlib.util.module_from_spec(spec)

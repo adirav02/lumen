@@ -14,7 +14,7 @@ log locations are configured. Roots apply to Codex; select `hosts:["codex"]`
 when measuring that scope alone. Other hosts retain their own home settings.
 
 ```sh
-.venv/bin/lumen collect-usage -w work/my-task/usage \
+.venv/bin/lumen collect-usage -w development/work/my-task/usage \
   --usage-log-location /path/to/codex/sessions \
   --usage-log-location /path/to/codex/archived_sessions \
   -j '{"hosts":["codex"]}'
@@ -25,7 +25,7 @@ same environment variable. Its root/descendant ownership, response-ID deduplicat
 and UTC-window rules are unchanged. Existing verified totals remain reproducible:
 
 ```sh
-.venv/bin/python scripts/collect_native_usage.py --repo "$PWD" \
+.venv/bin/python development/scripts/collect_native_usage.py --repo "$PWD" \
   --root-thread THREAD --since UTC_START --until UTC_END \
   --log-location /path/to/codex --json
 ```

@@ -153,7 +153,7 @@ Native interfaces used: [Claude status-line fields](https://code.claude.com/docs
 [Claude transcript paths](https://code.claude.com/docs/en/hooks),
 [Antigravity status line](https://antigravity.google/docs/cli/statusline), and
 [Antigravity JSON output](https://antigravity.google/docs/cli/headless/).
-See [adapter evidence](evaluation/host-usage-2026-10-19.json). Claude runtime
+See [adapter evidence](../development/docs/reports/evaluation/host-usage-2026-10-19.json). Claude runtime
 validation remains open; generated fixture payloads are not a live Claude test.
 
 ## Automatic Codex collection
@@ -206,10 +206,10 @@ remains partial; a snapshot cannot support billed cost per correct task. A
 subscription price is not a measured task charge.
 
 For deterministic task accounting on logs containing native `token_usage_record`
-entries, run `python3 scripts/collect_native_usage.py --repo /path/to/repo
+entries, run `python3 development/scripts/collect_native_usage.py --repo /path/to/repo
 --root-thread ID` (on one line). Alternatively use `--since UTC --until UTC`;
 a window must identify exactly one active root, otherwise supply its ID.
-`--task work/YYYYMMDD-slug` defaults to status.json's `started_utc`/`ended_utc`;
+`--task development/work/YYYYMMDD-slug` defaults to status.json's `started_utc`/`ended_utc`;
 explicit timestamps override them. Both endpoints are inclusive and require UTC.
 The script reads local `sessions/` and `archived_sessions/` under `CODEX_HOME`
 (or `~/.codex`), follows explicit `source.subagent.thread_spawn.parent_thread_id`
@@ -237,8 +237,8 @@ Claude also offers [request/token/cost telemetry](https://code.claude.com/docs/e
 for richer exports, including estimated cost and incomplete visibility of internal
 retry attempts. The current adapters do not claim full per-request coverage.
 
-The [current collection report](evaluation/codex-usage-2026-10-19.json) retains
-numeric evidence with no conversation text. The earlier [validation log](evaluation/usage.jsonl)
+The [current collection report](../development/docs/reports/evaluation/codex-usage-2026-10-19.json) retains
+numeric evidence with no conversation text. The earlier [validation log](../development/docs/reports/evaluation/usage.jsonl)
 retains its initial unavailable-telemetry note and a later correction: host
 counters were subsequently found in local logs. Those were not direct per-call
 API or billing receipts. No counter has been reconstructed from payload lengths.

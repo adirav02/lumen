@@ -13,17 +13,17 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def check(root):
     return subprocess.run(
-        [sys.executable, str(ROOT / 'scripts/check_roadmap.py'), '--root', str(root)],
+        [sys.executable, str(ROOT / 'development/scripts/check_roadmap.py'), '--root', str(root)],
         capture_output=True, text=True,
     )
 
 
 @pytest.fixture
 def roadmap(tmp_path):
-    shutil.copytree(ROOT / 'docs/roadmap', tmp_path / 'docs/roadmap')
-    (tmp_path / 'scripts').mkdir()
-    shutil.copyfile(ROOT / 'scripts/roadmap_manifest.json',
-                    tmp_path / 'scripts/roadmap_manifest.json')
+    shutil.copytree(ROOT / 'development/docs/roadmap', tmp_path / 'development/docs/roadmap')
+    (tmp_path / 'development/scripts').mkdir(parents=True)
+    shutil.copyfile(ROOT / 'development/scripts/roadmap_manifest.json',
+                    tmp_path / 'development/scripts/roadmap_manifest.json')
     assert check(tmp_path).returncode == 0
     return tmp_path
 
@@ -32,7 +32,7 @@ def roadmap(tmp_path):
     'content', 'missing', 'extra', 'order', 'header', 'part_limit', 'index_limit',
 ])
 def test_preservation_rejects_damage(roadmap, change):
-    folder = roadmap / 'docs/roadmap'
+    folder = roadmap / 'development/docs/roadmap'
     part = folder / '00-preamble.md'
     if change == 'content':
         part.write_bytes(part.read_bytes().replace(b'Fixed decisions:', b'Changed decisions:'))
@@ -41,7 +41,7 @@ def test_preservation_rejects_damage(roadmap, change):
     elif change == 'extra':
         shutil.copyfile(part, folder / '99-extra.md')
     elif change == 'order':
-        path = roadmap / 'scripts/roadmap_manifest.json'
+        path = roadmap / 'development/scripts/roadmap_manifest.json'
         manifest = json.loads(path.read_text())
         manifest['parts'].reverse()
         path.write_text(json.dumps(manifest))

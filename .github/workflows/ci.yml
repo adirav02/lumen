@@ -45,8 +45,10 @@ jobs:
 
       - name: Check documentation and generated agent profiles
         run: |
-          python scripts/check_docs.py
-          python scripts/sync_agents.py --check
+          python development/scripts/check_docs.py
+          python development/scripts/gen_doc_index.py --check
+          python development/scripts/gen_repo_map.py --check
+          python development/scripts/sync_agents.py --check
 
       # Fail explicitly if runner image changes would skip real PDF smoke tests.
       - name: Require the PDF rendering browser
@@ -66,7 +68,7 @@ jobs:
 
       - name: Run pytest test suite
         run: |
-          python scripts/run_tests.py -ra --junitxml=test-results/pytest.xml
+          python development/scripts/run_tests.py -ra --junitxml=test-results/pytest.xml
 
       - name: Preserve test results
         if: ${{ always() }}
@@ -107,8 +109,8 @@ jobs:
 
       - name: Build distribution packages (sdist and wheel)
         run: |
-          python scripts/build_public.py
-          python scripts/check_release_version.py
+          python development/scripts/build_public.py
+          python development/scripts/check_release_version.py
 
       - name: Check package metadata with twine
         run: |
@@ -116,7 +118,7 @@ jobs:
 
       - name: Verify clean wheel installation in isolated environment
         run: |
-          python scripts/smoke_installed.py --wheel dist/*.whl
+          python development/scripts/smoke_installed.py --wheel dist/*.whl
 
       - name: Preserve validated distributions
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

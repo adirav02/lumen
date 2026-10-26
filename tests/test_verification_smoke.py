@@ -26,7 +26,7 @@ def test_demo_runs_self_contained_and_cleans_workspaces(tmp_path):
 
 
 def test_wheel_probe_rejects_source_environment(tmp_path, monkeypatch):
-    spec = importlib.util.spec_from_file_location('probe', ROOT / 'scripts/_installed_probe.py')
+    spec = importlib.util.spec_from_file_location('probe', ROOT / 'development/scripts/_installed_probe.py')
     probe = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(probe)
     # Even with a venv, source imports cannot count as distribution evidence.

@@ -161,7 +161,7 @@ check dependencies and answer leakage across questions. Inspect the actual PDF f
 printed instructions/duration and absence of source numbering. Reproduce from a
 restored clone with the saved seed, try three other seeds and explain identical
 results, verify original hashes, and remove all owned cancelled-run leftovers and
-verification clones. Clones belong under `.tmp/`, never `.lumen/` or `work/`.
+verification clones. Clones belong under `.tmp/`, never `.lumen/` or `development/work/`.
 Record evidence in private artifacts and keep the delivery reply short.
 
 ## Keep delivery replies minimal

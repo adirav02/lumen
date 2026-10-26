@@ -38,7 +38,7 @@ claim an incomplete exam is done. This self-check applies to every course.
 8. Remove owned leftovers from cancelled runs and every verification clone on
    success, failure or cancellation. Use `tempfile.TemporaryDirectory(dir='.tmp')`
    or `try/finally` cleanup. Never create verification clones in `.lumen/` or
-   `work/`. Use public cancellation/recovery operations for publication jobs and
+   `development/work/`. Use public cancellation/recovery operations for publication jobs and
    reservations; do not delete arbitrary live learner state. Preserve intended
    deliverables, private verification evidence and usage records.
 

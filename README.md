@@ -2,8 +2,8 @@
 
 Lumen is an evidence-based, portable course tutor and learning assistant for **OpenAI Codex**, **Anthropic Claude Code**, and **Google Antigravity**. It preserves original course materials, retrieves required knowledge with exact mathematical provenance, guides learners through targeted practice, and maintains a deterministic, audit-preserved record of demonstrated mastery.
 
-Release validation remains open. See the [completed/remaining evidence tracker](docs/release-readiness.md)
-and [Claude Code test handoff](docs/claude-handoff.md) for a friend with access.
+Release validation remains open. See the [completed/remaining evidence tracker](development/docs/release-readiness.md)
+and [Claude Code test handoff](development/docs/reports/claude-handoff.md) for a friend with access.
 Tagged CI builds prepare draft releases while these gates remain open.
 
 ---
@@ -32,6 +32,8 @@ Tagged CI builds prepare draft releases while these gates remain open.
 
 ---
 
+Developer setup, tasks and verification: [development/README.md](development/README.md).
+
 ## Installation & Setup
 
 1. **Clone and enter the repository**:
@@ -42,11 +44,11 @@ Tagged CI builds prepare draft releases while these gates remain open.
 
 2. **Bootstrap from the local pip cache, offline by default**:
    ```bash
-   python3 scripts/bootstrap.py
+   python3 development/scripts/bootstrap.py
    ```
    This creates `.venv`, installs development dependencies and Lumen, and runs
    dependency diagnostics. Use `--online` to allow downloads when the cache is
-   incomplete. See [offline setup](docs/dependency-bootstrap.md) for wheelhouse
+   incomplete. See [offline setup](development/docs/dependency-bootstrap.md) for wheelhouse
    provisioning and cache selection.
 
 3. **Verify environment capabilities**:
@@ -56,7 +58,7 @@ Tagged CI builds prepare draft releases while these gates remain open.
 
 Development uses one agent for the whole task. Delegation requires an explicit
 user request. Start usage collection before setup, without a venv, with
-`python3 scripts/watch_usage.py --label my-task`; stop it with Ctrl-C at task end.
+`python3 development/scripts/watch_usage.py --label my-task`; stop it with Ctrl-C at task end.
 Verification clones belong under `.tmp/` and must be deleted at the end.
 
 ---
@@ -129,20 +131,20 @@ provides 16 local reviewed cases and a protocol for future unseen host testing.
 Run the full automated suite, including provenance, extraction review, assembly and PDF privacy,
 attempt/evidence lifecycle, migrations, recovery, CLI and configuration regressions:
 ```bash
-.venv/bin/python scripts/run_tests.py
+.venv/bin/python development/scripts/run_tests.py
 ```
 
 ---
 
 The independent audit fixture and full workflow can be run with:
 ```bash
-.venv/bin/python scripts/run_tests.py tests/test_audit_course_e2e.py
+.venv/bin/python development/scripts/run_tests.py tests/test_audit_course_e2e.py
 ```
-See [the audit report](docs/audit-2026-10-18.md) and [the corrected tutoring workflow](docs/lumen-workflow.md).
+See [the audit report](development/docs/reports/audit-2026-10-18.md) and [the corrected tutoring workflow](docs/lumen-workflow.md).
 
 ## Host Integration
 
-Lumen supplies shared loaders and CLI integration for the three required AI agent platforms. Automated tests inspect files and simulate host markers. Separate live evidence verifies [Antigravity integration and fresh-session resume](docs/antigravity-integration-report.md) and [Codex visual review of real course materials](docs/real-course-integration-report.md). Live Claude Code integration and cross-host handover remain open; see [release status](docs/release-readiness.md).
+Lumen supplies shared loaders and CLI integration for the three required AI agent platforms. Automated tests inspect files and simulate host markers. Separate live evidence verifies [Antigravity integration and fresh-session resume](development/docs/reports/antigravity-integration-report.md) and [Codex visual review of real course materials](development/docs/reports/real-course-integration-report.md). Live Claude Code integration and cross-host handover remain open; see [release status](development/docs/release-readiness.md).
 
 ### 1. OpenAI Codex
 - **Native Instruction Loader**: Root `AGENTS.md` directs Codex to read `docs/agents.md`.
@@ -215,11 +217,11 @@ CLI entrypoints, source ingestion, retrieval/provenance and backup/restore.
 Tagged releases reuse these checks and attach those exact validated distributions
 to a draft release. The tag must equal `v<version>` from package metadata
 (for example, `v0.1.0`); manual release retries must select a tag.
-See [local distribution verification](docs/conventions.md#distribution-verification)
-and [CI review and remaining checks](docs/ci-review.md).
+See [local distribution verification](development/docs/conventions.md#distribution-verification)
+and [CI review and remaining checks](development/docs/reports/ci-review.md).
 
-For public distribution builds, run `python scripts/build_public.py`, followed by
-`python scripts/check_release_version.py`. The build wrapper removes local owner
+For public distribution builds, run `python development/scripts/build_public.py`, followed by
+`python development/scripts/check_release_version.py`. The build wrapper removes local owner
 identities and timestamps from source archive metadata before publication.
 
 

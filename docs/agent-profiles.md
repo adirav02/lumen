@@ -44,7 +44,7 @@ No profile creates a separate learner memory or assessment policy. Only the
 assigned writer commits changes through the shared core. Restart an existing
 Claude session after first adding `.claude/agents/`, then inspect available
 profiles and perform an actual bounded lookup invocation. `/agents` is version-sensitive: older versions show an inspector,
-while newer versions may show a reminder. Follow the [live test handoff](claude-handoff.md)
+while newer versions may show a reminder. Follow the [live test handoff](../development/docs/reports/claude-handoff.md)
 and capture installed-version behavior to confirm discovery. Claude Code is not
 installed in this review environment, so native loading and delegation still
 require a live smoke test.

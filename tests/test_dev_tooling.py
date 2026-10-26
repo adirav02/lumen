@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def run(root, script, *args, ok=True):
-    result = subprocess.run([sys.executable, str(ROOT / 'scripts' / script),
+    result = subprocess.run([sys.executable, str(ROOT / 'development/scripts' / script),
                              '--root', str(root), *args], capture_output=True, text=True)
     if ok:
         assert result.returncode == 0, result.stdout + result.stderr
@@ -24,11 +24,12 @@ def run(root, script, *args, ok=True):
 
 @pytest.fixture
 def repo(tmp_path):
-    for name in ('agents', 'work/_template'):
+    for name in ('development/agents', 'development/work/_template'):
         shutil.copytree(ROOT / name, tmp_path / name)
     (tmp_path / 'AGENTS.md').write_text('TL;DR: Existing loader.\nStatus: active; date: 2026-10-19.\n')
     (tmp_path / 'docs').mkdir()
-    shutil.copyfile(ROOT / 'docs/task-log.md', tmp_path / 'docs/task-log.md')
+    (tmp_path / 'development/docs').mkdir()
+    shutil.copyfile(ROOT / 'development/docs/task-log.md', tmp_path / 'development/docs/task-log.md')
     return tmp_path
 
 
@@ -41,8 +42,8 @@ def test_sync_check_idempotence_preservation_and_solo(repo):
     legacy.parent.mkdir(parents=True)
     legacy.write_text('Legacy profile, keep verbatim.\n')
     # Copying an archived role back must not silently re-enable deployment.
-    shutil.copyfile(ROOT / 'archive/delegated-agents/dev_explorer.md',
-                    repo / 'agents/dev_explorer.md')
+    shutil.copyfile(ROOT / 'development/archive/delegated-agents/dev_explorer.md',
+                    repo / 'development/agents/dev_explorer.md')
     run(repo, 'sync_agents.py')
     assert (repo / 'AGENTS.md').read_text().startswith(before)
     snapshot = {p: p.read_bytes() for p in repo.rglob('*') if p.is_file()}
@@ -65,7 +66,7 @@ def test_sync_check_idempotence_preservation_and_solo(repo):
 def test_sync_retires_only_its_own_role_files(repo, folder, suffix, role, generated):
     old = repo / folder / (role + suffix)
     old.parent.mkdir(parents=True, exist_ok=True)
-    content = ('# GENERATED from agents/ - edit the source\n' if generated
+    content = ('# GENERATED from development/agents/ - edit the source\n' if generated
                else 'Hand-maintained legacy role.\n')
     old.write_text(content)
     run(repo, 'sync_agents.py', '--check', ok=False)
@@ -96,12 +97,12 @@ def test_task_create_status_archive_and_collision(repo):
     review = task / 'review.md'
     review.write_text(review.read_text().replace('Verdict: PENDING', 'Verdict: PASS'))
     run(repo, 'archive_task.py', data['task_id'])
-    archived = json.loads((repo / 'work/_archive' / data['task_id'] / 'status.json').read_text())
+    archived = json.loads((repo / 'development/work/_archive' / data['task_id'] / 'status.json').read_text())
     assert archived['started_utc'] == data['started_utc']
     assert datetime.fromisoformat(archived['ended_utc']) >= datetime.fromisoformat(data['started_utc'])
     assert not task.exists()
-    assert (repo / 'work/_archive' / data['task_id']).is_dir()
-    assert data['task_id'] in (repo / 'docs/task-log.md').read_text()
+    assert (repo / 'development/work/_archive' / data['task_id']).is_dir()
+    assert data['task_id'] in (repo / 'development/docs/task-log.md').read_text()
     assert data['task_id'] not in run(repo, 'task_status.py').stdout
     run(repo, 'check_docs.py')
 
@@ -126,7 +127,7 @@ def test_docs_checks_reject_invalid_files(repo, failure):
 
 def test_docs_ignore_temporary_verification_clones(repo):
     # Both a root clone and scratch nested within the checked folders are excluded.
-    for folder in ('.tmp/clone/docs', 'docs/.tmp/clone', 'work/.tmp/clone', 'agents/.tmp/clone'):
+    for folder in ('.tmp/clone/docs', 'docs/.tmp/clone', 'development/work/.tmp/clone', 'development/agents/.tmp/clone'):
         path = repo / folder / 'invalid.md'
         path.parent.mkdir(parents=True)
         path.write_text('No headers\n' * 200)

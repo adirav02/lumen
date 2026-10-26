@@ -62,10 +62,10 @@ Thumbs.db
 /examples/Harbor systems - semester 1/
 
 # Local development task instances; keep the shared template tracked.
-/work/*
-/work/_archive/
-!/work/_template/
-!/work/_template/**
+/development/work/*
+/development/work/_archive/
+!/development/work/_template/
+!/development/work/_template/**
 
 # Compact test runner full log
 /.tmp/

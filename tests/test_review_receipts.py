@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'development/scripts'))
 from _test_receipt import is_full_suite, receipt_status, save_receipt, tree_identity
 import run_tests
 

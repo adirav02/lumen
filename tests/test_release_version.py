@@ -8,7 +8,7 @@ import zipfile
 
 import pytest
 
-spec = importlib.util.spec_from_file_location("check_release_version", Path(__file__).resolve().parents[1] / "scripts/check_release_version.py")
+spec = importlib.util.spec_from_file_location("check_release_version", Path(__file__).resolve().parents[1] / "development/scripts/check_release_version.py")
 release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
 

@@ -8,7 +8,7 @@ import pytest
 
 from test_release_version import distributions, release
 
-spec = importlib.util.spec_from_file_location('build_public', Path(__file__).resolve().parents[1] / 'scripts/build_public.py')
+spec = importlib.util.spec_from_file_location('build_public', Path(__file__).resolve().parents[1] / 'development/scripts/build_public.py')
 build = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(build)
 

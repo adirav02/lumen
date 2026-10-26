@@ -14,10 +14,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.fixture
 def runner(tmp_path):
-    script = tmp_path / 'scripts/run_tests.py'
-    script.parent.mkdir()
+    script = tmp_path / 'development/scripts/run_tests.py'
+    script.parent.mkdir(parents=True)
     for name in ('run_tests.py', '_test_receipt.py', '_devtools.py'):
-        shutil.copyfile(ROOT / 'scripts' / name, script.parent / name)
+        shutil.copyfile(ROOT / 'development/scripts' / name, script.parent / name)
     (tmp_path / 'pytest.ini').write_text('[pytest]\n')
     (tmp_path / '.gitignore').write_text('.tmp/\n__pycache__/\n.pytest_cache/\n')
     for args in [('init',), ('config', 'user.name', 'Fixture'),

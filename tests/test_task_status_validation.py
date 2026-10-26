@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/task_status.py'
+SCRIPT = Path(__file__).resolve().parents[1] / 'development/scripts/task_status.py'
 VALID = {
     'task_id': '20261019-example', 'title': 'Example', 'state': 'planned',
     'owner_role': 'manager', 'host': None, 'model': None,
@@ -18,7 +18,7 @@ VALID = {
 
 
 def write_status(root, data, folder='20261019-example'):
-    path = root / 'work' / folder / 'status.json'
+    path = root / 'development/work' / folder / 'status.json'
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data))
     return path

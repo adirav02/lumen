@@ -5,14 +5,14 @@ from pathlib import Path
 import subprocess
 import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'development/scripts'))
 from _test_receipt import save_receipt, tree_identity
 from make_review_packet import make_packet
 from test_review_receipts import git_repo
 
 
 def task(root):
-    path = root / 'work/20261019-example'
+    path = root / 'development/work/20261019-example'
     path.mkdir(parents=True)
     (path / 'status.json').write_text(json.dumps({'based_on_commit': tree_identity(root)['head_commit']}))
     (path / 'brief.md').write_text('TL;DR: Fix a privacy leak.\nStatus: active.\n\n## Acceptance\n- Public output hides policy.\n')

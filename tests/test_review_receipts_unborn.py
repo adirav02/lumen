@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'development/scripts'))
 from _test_receipt import tree_identity
 
 
@@ -33,9 +33,9 @@ def test_wrapper_runs_and_saves_receipt_before_first_commit(tmp_path):
     (tmp_path / '.gitignore').write_text('.tmp/\n__pycache__/\n.pytest_cache/\n')
     (tmp_path / 'pytest.ini').write_text('[pytest]\n')
     (tmp_path / 'test_sample.py').write_text('def test_sample():\n    pass\n')
-    scripts = tmp_path / 'scripts'
-    scripts.mkdir()
-    original = Path(__file__).resolve().parents[1] / 'scripts'
+    scripts = tmp_path / 'development/scripts'
+    scripts.mkdir(parents=True)
+    original = Path(__file__).resolve().parents[1] / 'development/scripts'
     for name in ('run_tests.py', '_test_receipt.py', '_devtools.py'):
         shutil.copyfile(original / name, scripts / name)
     result = subprocess.run([sys.executable, str(scripts / 'run_tests.py')],

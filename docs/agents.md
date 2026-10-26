@@ -4,14 +4,14 @@ Applies to Codex, Claude Code, Google Antigravity, and future adapters. Follow t
 
 ## Start
 
-Read `goal.md` once when beginning implementation or reviewing scope, then only [the roadmap index](roadmap/INDEX.md) for roadmap context.
+Read `development/goal.md` once when beginning implementation or reviewing scope, then only [the roadmap index](../development/docs/roadmap/INDEX.md) for roadmap context.
 Open individual roadmap parts only when their detail is needed. During an established tutoring session, load only the course brief and needed workflow details. Do not repeatedly inject the full plan, all course materials, or the entire conversation history.
 
 The shared package contains an implemented, locally tested tutor runtime (`lumen`), CLI, database migrations (v1–v10), extraction pipeline, diagnostic assessment, and provenance tracking. Inspect actual code and available tools before invoking a command.
 
 For exam cataloging, question history, duplicate review and practice scores, read [question tracking](question-tracking.md) on demand. For organized imports, use [course layout](course-layout.md) and the project `extract-course-questions` skill. Cataloging or selecting a question does not prove it was shown, answered, graded or answered correctly. Extraction acceptance, visual review and mathematical validation are separate gates. Student presentations need their own actual render/print checks; do not infer them from source review.
 
-For CLI tutoring commands, read [the audited workflow](lumen-workflow.md) on demand. It complements the corrected quick-reference examples in the Lumen skill. See [release readiness](release-readiness.md) for current gates, [Claude handoff](claude-handoff.md) for live testing, [usage measurement](usage-measurement.md) for explicit JSONL telemetry, and [the audit](audit-2026-10-18.md) for earlier verified scope; simulated host markers do not establish live host integration.
+For CLI tutoring commands, read [the audited workflow](lumen-workflow.md) on demand. It complements the corrected quick-reference examples in the Lumen skill. See [release readiness](../development/docs/release-readiness.md) for current gates, [Claude handoff](../development/docs/reports/claude-handoff.md) for live testing, [usage measurement](usage-measurement.md) for explicit JSONL telemetry, and [the audit](../development/docs/reports/audit-2026-10-18.md) for earlier verified scope; simulated host markers do not establish live host integration.
 
 ## Shared operating rules
 
@@ -76,7 +76,7 @@ In diagnostics:
 
 ## Implementation mode
 
-- Build the relevant milestone, located through [the roadmap index](roadmap/INDEX.md), with the smallest complete path through its acceptance checks. Do not silently implement deferred scope.
+- Build the relevant milestone, located through [the roadmap index](../development/docs/roadmap/INDEX.md), with the smallest complete path through its acceptance checks. Do not silently implement deferred scope.
 - Keep storage, retrieval, idempotency, provenance, and assessment computation in the shared core. Adapters translate host execution and file/image access only.
 - Make database changes through versioned migrations (v1–v10). Back up before a migration with material data risk; enable foreign keys on every connection and test restore. Detect and quarantine legacy constraint conflicts (e.g. duplicate attempt links in schema v4 to `backup_v4_assessment_items` and `legacy_duplicate_attempt_links`; unresolved identities in schema v6 to `backup_v6_*`; historical scores and incompatible evidence in schema v7 to `backup_v7_*`) before unique index creation or scoring. Migration 10 preserves `backup_v9_assessment_items` and `backup_v9_topic_state` before applying the visual gate to existing confirmations.
 - Do not hold a database write transaction during model calls or file extraction. Do not sync a live database through Git or shared network folders.

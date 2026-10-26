@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'development/scripts'))
 from collect_native_usage import collect, table
 
 START, END = '2026-10-19T10:00:00Z', '2026-10-19T11:00:00Z'

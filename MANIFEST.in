@@ -1,0 +1,12 @@
+# Development helpers referenced by the source distribution's tests.
+include development/README.md development/goal.md
+include scripts/import_course_collection.py
+recursive-include development/scripts *.py *.json
+recursive-include development/agents *.md *.yaml
+recursive-include development/docs *.md *.json *.jsonl *.patch
+recursive-include development/archive *.md
+recursive-include development/bench *.md
+recursive-include development/work/_template *.md *.json .gitkeep
+# Task instances and local/private course data are never distribution inputs.
+prune development/work/_archive
+global-exclude __pycache__ *.py[cod]

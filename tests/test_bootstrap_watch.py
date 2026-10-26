@@ -12,7 +12,7 @@ import zipfile
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location('bootstrap', ROOT / 'scripts/bootstrap.py')
+spec = importlib.util.spec_from_file_location('bootstrap', ROOT / 'development/scripts/bootstrap.py')
 bootstrap = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bootstrap)
 
@@ -56,7 +56,7 @@ def test_offline_commands_and_cleanup_after_failure(tmp_path, monkeypatch):
 
 
 def watcher_command(project, *args):
-    return [sys.executable, '-S', str(ROOT / 'scripts/watch_usage.py'),
+    return [sys.executable, '-S', str(ROOT / 'development/scripts/watch_usage.py'),
             '--label', 'solo-default', '--project', str(project), '--host', 'codex',
             '--usage-log-location', str(project / 'logs'), *args]
 

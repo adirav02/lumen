@@ -69,11 +69,11 @@ def test_release_requires_reusable_ci_and_publishes_its_artifact():
 def test_ci_uses_the_test_wrapper_and_preserves_junit_results():
     workflow = yaml.load((ROOT / '.github/workflows/ci.yml').read_text(), Loader=yaml.BaseLoader)
     commands = [step.get('run', '') for step in workflow['jobs']['test']['steps']]
-    assert any('python scripts/run_tests.py' in command and
+    assert any('python development/scripts/run_tests.py' in command and
                '--junitxml=test-results/pytest.xml' in command for command in commands)
     assert all('python -m pytest' not in command for command in commands)
     build_steps = workflow['jobs']['package']['steps']
-    assert any('python scripts/build_public.py' in step.get('run', '') for step in build_steps)
+    assert any('python development/scripts/build_public.py' in step.get('run', '') for step in build_steps)
 
 
 def test_ci_preserves_runtime_gates_and_isolated_distribution_smoke():
@@ -82,12 +82,12 @@ def test_ci_preserves_runtime_gates_and_isolated_distribution_smoke():
         '3.10', '3.11', '3.12', '3.13', '3.14', '3.15']
     commands = '\n'.join(step.get('run', '') for step in ci['jobs']['test']['steps'])
     assert '.[dev]' in commands
-    assert 'scripts/check_docs.py' in commands and 'scripts/sync_agents.py --check' in commands
+    assert 'development/scripts/check_docs.py' in commands and 'development/scripts/sync_agents.py --check' in commands
     assert 'browser_executable' in commands and 'raise SystemExit' in commands
     assert 'lumen capabilities' in commands and 'python demo.py' in commands
     package = '\n'.join(step.get('run', '') for step in ci['jobs']['package']['steps'])
-    assert 'scripts/check_release_version.py' in package and 'twine check dist/*' in package
-    assert 'scripts/smoke_installed.py --wheel dist/*.whl' in package
+    assert 'development/scripts/check_release_version.py' in package and 'twine check dist/*' in package
+    assert 'development/scripts/smoke_installed.py --wheel dist/*.whl' in package
     assert 'examples/' not in package
     for workflow in (ci, yaml.load((ROOT / '.github/workflows/release.yml').read_text(), Loader=yaml.BaseLoader)):
         for job in workflow['jobs'].values():
@@ -105,7 +105,7 @@ def test_ci_installs_build_dependencies_before_test_preflight():
     installed = set()
     for step in ci['jobs']['test']['steps']:
         command = step.get('run', '')
-        if 'python scripts/run_tests.py' in command:
+        if 'python development/scripts/run_tests.py' in command:
             break
         for line in command.splitlines():
             tokens = shlex.split(line)
