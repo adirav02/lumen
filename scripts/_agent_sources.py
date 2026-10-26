@@ -3,8 +3,10 @@
 """Only scalar frontmatter and tier: {model: ID} mappings are supported."""
 import re
 
-SUBAGENTS = ('dev_explorer', 'dev_worker', 'dev_planner', 'dev_reviewer')
-ROLES = SUBAGENTS + ('manager',)
+# Archived roles are never read or deployed, even if copied back into agents/.
+RETIRED_ROLES = ('dev_explorer', 'dev_worker', 'dev_planner', 'dev_reviewer',
+                 'explorer', 'worker', 'planner', 'reviewer')
+ROLES = ('manager',)
 REASONING = {'low', 'medium', 'high'}  # Verified local Codex model cache, 2026-10-19.
 
 

@@ -10,9 +10,9 @@ subject-specific profiles, skills and routing notes have been removed.
 | `course_practice` | `gpt-6.1-sol` / medium | Bounded practice, extraction review and routine checking of exact versions |
 | `course_reasoning` | `gpt-6.1-sol` / high | A specifically unresolved proof, disputed key or substantive edge case |
 
-Use one focused delegation when useful, with minimal source excerpts and explicit
-ownership. Prefer direct execution for trivial work. Child agents do not spawn
-more agents. The parent coordinates the writer, validates returned evidence, and
+One agent does the whole task by default. Use these profiles only when the user
+explicitly asks for delegation, with minimal excerpts and explicit ownership.
+Child agents do not spawn more agents. The parent coordinates the writer, validates returned evidence, and
 commits learner state using Lumen's public operations and receipts. A source key
 is retrieved evidence, not an independently proved answer. Preserve the learner's
 language and assistance preferences.

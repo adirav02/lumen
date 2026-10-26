@@ -40,21 +40,24 @@ Tagged CI builds prepare draft releases while these gates remain open.
    cd lumen
    ```
 
-2. **Create and activate a virtual environment**:
+2. **Bootstrap from the local pip cache, offline by default**:
    ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
+   python3 scripts/bootstrap.py
+   ```
+   This creates `.venv`, installs development dependencies and Lumen, and runs
+   dependency diagnostics. Use `--online` to allow downloads when the cache is
+   incomplete. See [offline setup](docs/dependency-bootstrap.md) for wheelhouse
+   provisioning and cache selection.
+
+3. **Verify environment capabilities**:
+   ```bash
+   .venv/bin/lumen capabilities
    ```
 
-3. **Install Lumen in editable mode**:
-   ```bash
-   pip install -e ".[dev]"
-   ```
-
-4. **Verify installation and environment capabilities**:
-   ```bash
-   lumen capabilities
-   ```
+Development uses one agent for the whole task. Delegation requires an explicit
+user request. Start usage collection before setup, without a venv, with
+`python3 scripts/watch_usage.py --label my-task`; stop it with Ctrl-C at task end.
+Verification clones belong under `.tmp/` and must be deleted at the end.
 
 ---
 

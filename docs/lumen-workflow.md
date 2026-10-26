@@ -84,6 +84,10 @@ A missing PDF for an existing assessment calls for export, not a new assessment.
 
 ## Assemble from a saved blueprint
 
+Before delivery, complete [the exam self-check](exam-self-check.md). Use `.tmp/`
+for all verification clones and remove them on every exit path.
+
+
 Save this object as `blueprint.json` (replace the topic ID with a registered ID):
 
 ```json
