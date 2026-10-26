@@ -27,12 +27,20 @@ def _positive(value, name):
         raise ValidationError(name + " must be a positive finite number.")
 
 
+def validate_paper_settings(blueprint):
+    if 'duration_minutes' in blueprint:
+        _positive(blueprint['duration_minutes'], 'duration_minutes')
+    if 'instructions' in blueprint:
+        if not isinstance(blueprint['instructions'], list) or any(not isinstance(v, str) or not v.strip() for v in blueprint['instructions']):
+            raise ValidationError('instructions must be a list of nonempty strings.')
+
+
 def _validate(con, course, blueprint, learner):
     require_text(course, "course_id")
     if not CourseRepository(con).get_course(course):
         raise CourseNotFoundError(course)
     require_text(learner, "learner_id")
-    if not isinstance(blueprint, dict) or set(blueprint) - {"slots", "duration_minutes", "relaxations", "shuffle_options"} or "slots" not in blueprint:
+    if not isinstance(blueprint, dict) or set(blueprint) - {"slots", "duration_minutes", "relaxations", "shuffle_options", "instructions"} or "slots" not in blueprint:
         raise ValidationError("blueprint must contain slots and only supported strict policy fields.")
     policy = blueprint.get("relaxations", [])
     if (not isinstance(policy, list) or any(not isinstance(k, str) or k not in RELAXABLE_FIELDS for k in policy)
@@ -40,8 +48,7 @@ def _validate(con, course, blueprint, learner):
         raise ValidationError("relaxations must be a unique ordered list of source_version_ids, year_min, year_max or difficulty.")
     if "shuffle_options" in blueprint and blueprint["shuffle_options"] is not False:
         raise ValidationError("Option shuffling is unsupported.")
-    if "duration_minutes" in blueprint:
-        _positive(blueprint["duration_minutes"], "duration_minutes")
+    validate_paper_settings(blueprint)
     slots = blueprint["slots"]
     if not isinstance(slots, list) or not 1 <= len(slots) <= 100:
         raise ValidationError("slots must contain between 1 and 100 slots.")
@@ -475,9 +482,61 @@ def _report_once(con, course_id, blueprint, learner_id, *, internal=False, live_
                                    "topic_ids": sorted(slot.get("topic_ids", [])), "shortfall": shortfall}] if shortfall else [])})
     pool = {v for vs in without.values() for v in vs}
     conflicts = {v: (neighbors(v) & pool) - {v} for v in sorted(pool)}
+    from ..questions.constraints import load
+    from .combinations import enumerate_exams
+    constraints = load(con, course_id)
+    def prune(pool):
+        changed = True
+        while changed:
+            available = {v for values in pool.values() for v in values}
+            blocked = {v for v in available if constraints[v].get('stale') or any(
+                link['exercise_version_id'] not in available for link in constraints[v]['depends_on'])}
+            changed = bool(blocked)
+            for sid in pool:
+                pool[sid] = [v for v in pool[sid] if v not in blocked]
+    before_constraints = {sid: set(values) for sid, values in candidates.items()}
+    for pool in (candidates, without, safe_without):
+        prune(pool)
+    for slot in reports:
+        sid = slot['slot_id']
+        slot['safe_release_relief'] = _ids({v: rows[v] for v in set(safe_without[sid]) - set(candidates[sid])})
+        slot['reservation_only'] = _ids({v: rows[v] for v in set(without[sid]) - set(candidates[sid])})
+        removed = before_constraints[sid] - set(candidates[sid])
+        if removed:
+            slot['exclusions']['question_constraints'] = _ids({v: rows[v] for v in removed})
+            slot['eligible'] = _ids({v: rows[v] for v in candidates[sid]})
+            slot['available'] = len(slot['eligible']['family_ids'])
+            slot['shortfall'] = max(0, slot['needed'] - slot['available'])
+            slot['gaps'] = ([{'reason': 'question_constraints', 'slot_ids': [sid],
+                             'shortfall': slot['shortfall']}] if slot['shortfall'] else [])
+    # Answer disclosures are directional metadata, but either selection order leaks.
+    for vid, rules in constraints.items():
+        for link in rules['gives_away']:
+            other = link['exercise_version_id']
+            if vid in conflicts and other in conflicts:
+                conflicts[vid].add(other)
+                conflicts[other].add(vid)
     normal = _analysis(slots, candidates, rows, conflicts)
     relief = _analysis(slots, without, rows, conflicts)
     safe_relief = _analysis(slots, safe_without, rows, conflicts)
+    for analysis, pool in ((normal, candidates), (relief, without), (safe_relief, safe_without)):
+        combinations, witness = enumerate_exams(slots, pool, rows, conflicts, constraints, SEARCH_NODE_BUDGET)
+        analysis['distinct_exams'] = combinations
+        if any(c.get('depends_on') or c.get('stale') for c in constraints.values()):
+            joint = analysis['joint']
+            needed = joint['needed']
+            joint.update(status='feasible' if witness else 'infeasible' if combinations['exact'] else 'unknown',
+                         matched_lower_bound=needed if witness else 0,
+                         matched_upper_bound=needed if witness or not combinations['exact'] else max(0, needed-1),
+                         exact=bool(witness) or combinations['exact'],
+                         assignment=[{'slot_id': sid, 'version_id': v, 'family_id': rows[v]['exercise_family']}
+                                     for sid, v in (witness or [])])
+            capacity = analysis['capacity']
+            capacity['lower_bound'] = 1 if witness else 0
+            if combinations['exact'] and not witness:
+                capacity['upper_bound'] = 0
+            capacity['exact'] = capacity['lower_bound'] == capacity['upper_bound']
+            capacity['limitations'].append('Dependency-aware disjoint capacity is bounded; prerequisites must belong to each individual exam.')
     a, b = normal["capacity"], relief["capacity"]
     def improvement(capacity):
         return {"lower_bound": max(0, capacity["lower_bound"] - a["upper_bound"]),
@@ -510,6 +569,18 @@ def _report_once(con, course_id, blueprint, learner_id, *, internal=False, live_
                       "Assignments witness disjoint complete tests by splitting each slot allocation into its repeated demands.",
                       "Unknown metadata and pending review never imply availability."]}
 
+    result['warnings'] = [{'reason': 'low_slot_variety', 'slot_id': s['slot_id'],
+                           'eligible_questions': len(s['eligible']['version_ids']),
+                           'message': 'Fewer than 3 eligible questions; seed has little or no effect.'}
+                          for s in reports if len(s['eligible']['version_ids']) < 3]
+    pool = {v for values in candidates.values() for v in values}
+    result['question_constraints'] = [{'exercise_version_id': v, **c} for v, c in constraints.items()
+                                      if v in pool and (c['depends_on'] or c['gives_away'] or c.get('stale'))]
+    for v, c in constraints.items():
+        for link in c['gives_away']:
+            if v in pool and link['exercise_version_id'] in pool:
+                result['warnings'].append({'reason': 'answer_disclosure', 'exercise_version_id': v,
+                                           'target': link, 'message': 'These questions cannot appear in the same exam.'})
     joint = normal["joint"]
     result["gaps"] = [] if joint["status"] == "feasible" else [
         {"slot_id": s["slot_id"], "section": s["section"], "topic_ids": s["topic_ids"],

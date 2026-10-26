@@ -15,7 +15,7 @@ import subprocess
 import tempfile
 
 from ..errors import ValidationError
-from ..student import student_paper
+from ..student import student_paper, paper_question_text
 
 
 MATH = re.compile(r'\\\((.+?)\\\)|\\\[(.+?)\\\]|\$\$(.+?)\$\$|(?<!\\)\$([^$\n]+)\$|((?:\([^()\s]+\)|[A-Za-z][A-Za-z0-9]*)(?:[_^]\{[^{}\n]+\})+)', re.S)
@@ -108,7 +108,7 @@ def render_paper_html(paper):
     question_label = {'he': 'שאלה', 'ar': 'سؤال', 'en': 'Question'}[language]
     sections = []
     for question in paper['questions']:
-        paragraphs = render_question_text(question['question_text'])
+        paragraphs = render_question_text(paper_question_text(question))
         source = question['source_reference']
         if source:
             labels = list(dict.fromkeys(span.get('label', '') for span in source['source_spans'] if span.get('label')))
@@ -128,12 +128,14 @@ def render_paper_html(paper):
         sections.append('<section><h2>'+escape(heading)+'</h2><div class="question">'+paragraphs+
                         '</div><p class="source">'+escape(citation)+'</p><div class="answer-space"></div></section>')
     title = escape(paper['title'])
-    point_total = (' · '+str(sum(q['max_points'] for q in paper['questions']))+' total points'
+    point_total = (' · '+format(sum(q['max_points'] for q in paper['questions']), 'g')+' total points'
                    if all('max_points' in q for q in paper['questions']) else '')
+    duration = (' · '+str(paper['duration_minutes'])+' minutes') if 'duration_minutes' in paper else ''
+    instructions = ''.join('<p>'+formatted_text(line)+'</p>' for line in paper.get('instructions', []))
     return f'''<!doctype html><html lang="{language}" dir="{direction}"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src data:">
 <title>{title}</title><style>
-@page {{size:A4;margin:18mm}}*{{box-sizing:border-box}}
+@page {{size:A4;margin:18mm; @bottom-center {{content:"Page " counter(page) " of " counter(pages);font:9pt Arial;color:#526477}}}}*{{box-sizing:border-box}}
 body{{font-family:Arial,"DejaVu Sans",sans-serif;color:#172537;line-height:1.7;margin:0;font-size:11pt}}
 main{{max-width:180mm;margin:auto}}h1{{font-size:23pt;margin:0 0 5mm}}h2{{font-size:15pt;margin:0 0 4mm;border-bottom:1px solid #ccd5df;padding-bottom:2mm}}
 p{{margin:2.5mm 0;overflow-wrap:anywhere}}.meta,.source{{font-size:9pt;color:#526477}}
@@ -143,7 +145,9 @@ table{{border-collapse:collapse;font-size:9pt;width:100%;margin:4mm 0}}
 th,td{{border:1px solid #ccd5df;padding:2mm;text-align:start;overflow-wrap:anywhere}}
 thead{{display:table-header-group}}tr{{break-inside:avoid}}
 .answer-space{{height:45mm;margin:7mm 0;border-bottom:1px solid #d5dde6}}
-</style></head><body><main><h1>{title}</h1><p class="meta">{len(paper['questions'])} questions{point_total} · {escape(paper['assessment_id'])}</p>
+</style></head><body><main><h1>{title}</h1><p class="meta">{len(paper['questions'])} questions{point_total}{duration} · {escape(paper['assessment_id'])}</p>
+<p>Name ____________________ &nbsp; Date ____________________</p>
+<div class="instructions">{instructions}</div>
 {''.join(sections)}</main></body></html>'''
 
 

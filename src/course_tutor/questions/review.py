@@ -35,6 +35,8 @@ class QuestionReview(QuestionCatalog):
             validate_finite_number(metadata['points'], 'points', min_val=0)
         if metadata.get('year') is not None and (type(metadata['year']) is not int or not 1900 <= metadata['year'] <= 2200):
             raise ValidationError('year must be null or an integer between 1900 and 2200.')
+        from .constraints import validate_metadata
+        metadata = validate_metadata(self.con, course_id, row['exercise_version_id'], metadata)
         links = solution_links if solution_links is not None else json.loads(row['solution_links_json'])
         if not isinstance(links, list):
             raise ValidationError('solution_links must be a list.')

@@ -48,7 +48,7 @@ def _response(receipt, replay=False):
     return result
 
 
-def _run(core, course_id, learner_id, request_id, assessment_id=None, reason=None):
+def _run_impl(core, course_id, learner_id, request_id, assessment_id=None, reason=None):
     _validate(core, course_id, learner_id, request_id)
     operation = 'release_reservation' if assessment_id is not None else 'expire_reservations'
     params = {'learner_id': learner_id}
@@ -116,6 +116,15 @@ def _run(core, course_id, learner_id, request_id, assessment_id=None, reason=Non
                 affected_ids=[r['assessment_id'] for r in released], response_data=data)
             receipts.record_receipt(receipt)
         return _response(receipt)
+
+
+def _run(core, course_id, learner_id, request_id, assessment_id=None, reason=None):
+    result = _run_impl(core, course_id, learner_id, request_id, assessment_id, reason)
+    from .retirement import reconcile
+    records = [result['data']] if assessment_id is not None else result['data']['released']
+    for record in records:
+        reconcile(core, course_id, record['assessment_id'])
+    return result
 
 
 def release_reservation(core, course_id, learner_id, assessment_id, request_id, reason='released'):

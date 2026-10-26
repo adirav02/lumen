@@ -79,7 +79,7 @@ def _weights(con, course_id, learner_id, rows):
     return result
 
 
-def _allocate(slots, candidates, rows, conflicts, weights, seed):
+def _allocate(slots, candidates, rows, conflicts, weights, seed, constraints):
     rng = random.Random(seed)
     priority = {v: -math.log(max(rng.random(), 1e-300)) / weights[v]['weight']
                 for v in sorted({v for values in candidates.values() for v in values})}
@@ -91,7 +91,8 @@ def _allocate(slots, candidates, rows, conflicts, weights, seed):
 
     def visit(index, picked, families, assignment, last):
         if index == len(units):
-            return assignment
+            from ..questions.constraints import ordered_selection
+            return assignment if ordered_selection([v for _, v in assignment], constraints) is not None else None
         if budget[0] <= 0:
             return None
         budget[0] -= 1
@@ -129,7 +130,9 @@ def prepare_exam(con, course_id, learner_id, blueprint, seed, *, live_request_id
             raise ValidationError('Blueprint has no proven complete allocation.', {'gaps': _gaps(report)})
         pool = {v for values in candidates.values() for v in values}
         weights = _weights(con, course_id, learner_id, {v: rows[v] for v in pool})
-        assignment, priorities = _allocate(slots, candidates, rows, conflicts, weights, seed)
+        from ..questions.constraints import load, ordered_selection
+        constraints = load(con, course_id)
+        assignment, priorities = _allocate(slots, candidates, rows, conflicts, weights, seed, constraints)
         if assignment is None:
             raise ValidationError('Seeded allocation search budget exhausted.',
                                   {'gaps': _gaps(report, 'selection_search_budget_exhausted')})
@@ -172,8 +175,15 @@ def prepare_exam(con, course_id, learner_id, blueprint, seed, *, live_request_id
                         'review_identity': {'validation_state': version.validation_state,
                             'exercise_revision': len(version.revision_history) + 1,
                             'exercise_content_hash': digest}}})
+        order = ordered_selection([item['exercise_version_id'] for item in items], constraints)
+        items.sort(key=lambda item: order.index(item['exercise_version_id']))
+        for index, item in enumerate(items, 1):
+            item['item_order'] = index
+            item['snapshot']['question_constraints'] = constraints[item['exercise_version_id']]
+        from ..questions.constraints import paper_settings
+        effective_blueprint = paper_settings(con, order, report['relaxation_policy']['effective_blueprint'])
         return {'items': items, 'readiness': report,
-                'effective_blueprint': report['relaxation_policy']['effective_blueprint'],
+                'effective_blueprint': effective_blueprint,
                 'relaxation_policy': report['relaxation_policy'],
                 'selection_inputs': {'seed': seed, 'policy': 'strict_weighted_priority_v2',
                                      'weights': weights, 'priorities': priorities}}
@@ -304,6 +314,10 @@ def _validate_saved(core, repo, job, live):
         picked.add(vid)
         families.add(rows[vid]['exercise_family'])
         counts[sid] += 1
+    from ..questions.constraints import load, ordered_selection
+    saved_order = [i['exercise_version_id'] for i in repo.items(job['request_id'])]
+    if ordered_selection(saved_order, load(core.con, job['course_id'])) != saved_order:
+        raise ValidationError('Saved selection has missing prerequisites, stale constraints or answer disclosures.')
     if any(counts[s['id']] != s['count'] for s in slots):
         raise ValidationError('Saved selection does not satisfy the blueprint.', {'gaps': _gaps(report)})
 
