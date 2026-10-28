@@ -13,10 +13,10 @@ from course_tutor.assessment.export import render_paper_html
 from course_tutor.questions.assets import student_assets
 
 
-def png():
+def png(pixels=b'\xff\x00\x00\x00\xff\x00'):
     def chunk(kind, data):
         return struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data))
-    return b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',2,1,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(b'\x00\xff\x00\x00\x00\xff\x00'))+chunk(b'IEND',b'')
+    return b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',2,1,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(b'\x00'+pixels))+chunk(b'IEND',b'')
 
 
 def setup(c,tmp_path):
@@ -123,3 +123,48 @@ def test_rtl_math_with_offline_asset_has_isolated_english_metadata(tmp_path):
         assert 'dir="rtl"' in html and '<math' in html and '<bdi dir="ltr">10 points</bdi>' in html
         assert 'unicode-bidi:isolate' in html and 'class="with-assets"' in html
         assert 'PRIVATE' not in html and str(tmp_path) not in html
+
+
+@pytest.mark.parametrize('change_visual',[False,True])
+def test_relationships_track_visual_context_but_not_unrelated_points(tmp_path,change_visual):
+    with LumenCore(tmp_path/'w') as c:
+        target,sid,asset=setup(c,tmp_path);v=validate(c,target,asset)
+        source=tmp_path/'followup.txt';source.write_text('Question 2: Continue the reviewed earlier setup.')
+        psid=c.ingest_source('c',source,role='exam')['data']['source_version_id'];q=c.list_questions('c',psid)['questions'][0]
+        c.review_question_occurrence('c',q['id'],1,'accepted','Fixture source.')
+        c.validate_exercise_version(q['exercise_version_id'],expected_revision=1,reference_solution='Fixture',rubric={'max_points':1},checks={'fixture':True})
+        c.annotate_question('c',q['id'],2,{'depends_on':[{'exercise_version_id':target}]})
+        rubric=v['rubric']
+        if change_visual:
+            other=tmp_path/'other.png';other.write_bytes(png(b'\x00\x00\xff\xff\x00\xff'))
+            new_sid=c.ingest_source('c',other,catalog_questions=False)['data']['source_version_id']
+            rubric['student_assets']=[{**asset,'source_version_id':new_sid}]
+        else:rubric['max_points']=20
+        c.update_exercise_version(target,rubric=rubric,expected_revision=1)
+        c.validate_exercise_version(target,expected_revision=2,checks={'math_review':True,'visual_assets_reviewed':True})
+        if change_visual:
+            with pytest.raises(ValidationError,match='stale constraints'):
+                c.create_assessment('c','Changed visual context',{},[target,q['exercise_version_id']])
+        else:
+            c.create_assessment('c','Same visual context',{},[target,q['exercise_version_id']])
+
+
+def test_legacy_visual_attestation_cannot_reuse_a_text_only_relationship(tmp_path):
+    from course_tutor.questions.constraints import identity
+    with LumenCore(tmp_path/'w') as c:
+        target,sid,asset=setup(c,tmp_path);validate(c,target,asset)
+        source=tmp_path/'followup.txt';source.write_text('Question 2: Continue the reviewed earlier setup.')
+        psid=c.ingest_source('c',source,role='exam')['data']['source_version_id'];q=c.list_questions('c',psid)['questions'][0]
+        c.review_question_occurrence('c',q['id'],1,'accepted','Legacy relationship fixture.')
+        c.validate_exercise_version(q['exercise_version_id'],expected_revision=1,reference_solution='Fixture',rubric={'max_points':1},checks={'fixture':True})
+        c.annotate_question('c',q['id'],2,{'depends_on':[{'exercise_version_id':target}]})
+        # Reconstruct a persisted pre-context-digest bank, without altering real data.
+        row=c.con.execute('SELECT validation_notes,subparts_json FROM exercise_versions WHERE id=?',(target,)).fetchone()
+        notes=json.loads(row['validation_notes']);notes.pop('visual_context_hash')
+        c.con.execute('UPDATE exercise_versions SET validation_notes=? WHERE id=?',(json.dumps(notes),target))
+        meta=json.loads(c.con.execute('SELECT metadata_json FROM question_occurrences WHERE id=?',(q['id'],)).fetchone()[0])
+        exact=c.con.execute('SELECT exact_hash FROM question_fingerprints WHERE exercise_version_id=?',(target,)).fetchone()[0]
+        meta['depends_on'][0]['target_hash']=identity(exact,row['subparts_json'])
+        c.con.execute('UPDATE question_occurrences SET metadata_json=? WHERE id=?',(json.dumps(meta),q['id']))
+        with pytest.raises(ValidationError,match='stale constraints'):
+            c.create_assessment('c','Legacy image relationship',{},[target,q['exercise_version_id']])

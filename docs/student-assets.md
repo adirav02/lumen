@@ -37,6 +37,10 @@ Validation requires the explicit passing `visual_assets_reviewed` check, binds
 source version, SHA256, MIME, filename, version and `whole_image` region, and
 records them in exercise content identity/history. Asset changes through the
 normal rubric update withdraw validation and require fresh exact-version review.
+The visual-context digest also binds reviewed dependency/disclosure relationships:
+changing a diagram or its public text makes those links stale until reannotated.
+Unrelated point/private-note changes do not change that visual digest. Legacy image
+attestations without a digest require renewed relationship review, preserving history.
 Read the returned revision rather than assuming whether it incremented.
 
 # Selection, student boundary and re-export

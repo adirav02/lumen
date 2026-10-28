@@ -1252,7 +1252,9 @@ class ExerciseRepository:
                 ex_ver.subparts,
             )
 
+            from ..questions.assets import visual_context_hash
             provenance = {
+                "visual_context_hash": visual_context_hash(effective_rubric) if status == "validated" else None,
                 "reviewer": reviewer,
                 "checks": checks_dict,
                 "notes": notes,

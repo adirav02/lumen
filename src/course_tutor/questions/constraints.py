@@ -1,4 +1,4 @@
-"""Directional, text-bound question constraints; no learner or review inference."""
+"""Directional constraints bound to reviewed text and visual context, never inference."""
 import json
 import re
 
@@ -9,12 +9,27 @@ from .known_constraints import known_metadata, paper_settings
 
 FIELDS = ('depends_on', 'gives_away')
 
-def identity(text_hash, subparts):
-    return digest(json.dumps([text_hash, json.loads(subparts)], sort_keys=True, ensure_ascii=False))
+def identity(text_hash, subparts, validation_notes=None):
+    parts = [text_hash, json.loads(subparts)]
+    try:
+        attestation = json.loads(validation_notes or '{}')
+    except (ValueError, TypeError):
+        attestation = {}
+    if isinstance(attestation, dict):
+        visual = attestation.get('visual_context_hash')
+        checks = attestation.get('checks', {})
+        # Earlier visual attestations lacked a context digest. They cannot reuse
+        # a pre-asset text-only link silently; fresh review binds this legacy state.
+        if 'visual_context_hash' not in attestation and isinstance(checks, dict) and any(
+                k.casefold() == 'visual_assets_reviewed' for k in checks):
+            visual = 'legacy_visual_context_requires_review'
+        if visual:
+            parts.append(visual)
+    return digest(json.dumps(parts, sort_keys=True, ensure_ascii=False))
 
 
 def _version(con, course, vid):
-    row = con.execute('SELECT question_text,subparts_json FROM exercise_versions WHERE id=? AND course_id=?',
+    row = con.execute('SELECT question_text,subparts_json,validation_notes FROM exercise_versions WHERE id=? AND course_id=?',
                       (vid, course)).fetchone()
     if row is None:
         raise ValidationError('Question constraint target must belong to this course.')
@@ -22,7 +37,7 @@ def _version(con, course, vid):
 
 
 def validate_metadata(con, course, vid, metadata):
-    """Detach, validate and bind explicitly supplied relations to both texts."""
+    """Bind reviewed relations to both current text/subpart/visual identities."""
     metadata = json.loads(json.dumps(metadata))
     source = _version(con, course, vid)
     for field in FIELDS:
@@ -57,8 +72,8 @@ def validate_metadata(con, course, vid, metadata):
             if link_identity in seen:
                 raise ValidationError('Duplicate question constraint.')
             seen.add(link_identity)
-            link['source_hash'] = identity(digest(normalized(source['question_text'])), source['subparts_json'])
-            link['target_hash'] = identity(digest(normalized(target['question_text'])), target['subparts_json'])
+            link['source_hash'] = identity(digest(normalized(source['question_text'])), source['subparts_json'], source['validation_notes'])
+            link['target_hash'] = identity(digest(normalized(target['question_text'])), target['subparts_json'], target['validation_notes'])
     return metadata
 
 
@@ -92,15 +107,16 @@ def apply_known(con, course):
 def load(con, course):
     """Known original constraints also protect banks cataloged before this repair."""
     rows = {r['id']: dict(r) for r in con.execute(
-        'SELECT v.id,f.exact_hash,v.subparts_json FROM exercise_versions v LEFT JOIN question_fingerprints f ON f.exercise_version_id=v.id WHERE v.course_id=?', (course,))}
+        'SELECT v.id,f.exact_hash,v.subparts_json,v.validation_notes FROM exercise_versions v LEFT JOIN question_fingerprints f ON f.exercise_version_id=v.id WHERE v.course_id=?', (course,))}
     links = {vid: {field: [] for field in FIELDS} for vid in rows}
     for q in con.execute('SELECT exercise_version_id,metadata_json FROM question_occurrences WHERE course_id=?', (course,)):
         metadata = json.loads(q['metadata_json'])
         for field in FIELDS:
             for link in metadata.get(field, []):
                 target = rows.get(link['exercise_version_id'])
-                if (target is None or link.get('source_hash') != identity(rows[q['exercise_version_id']]['exact_hash'], rows[q['exercise_version_id']]['subparts_json'])
-                        or link.get('target_hash') != identity(target['exact_hash'], target['subparts_json'])):
+                source = rows[q['exercise_version_id']]
+                if (target is None or link.get('source_hash') != identity(source['exact_hash'], source['subparts_json'], source['validation_notes'])
+                        or link.get('target_hash') != identity(target['exact_hash'], target['subparts_json'], target['validation_notes'])):
                     links[q['exercise_version_id']].setdefault('stale', True)
                 links[q['exercise_version_id']][field].append(link)
     for vid, (_, metadata) in known_metadata(con, course).items():

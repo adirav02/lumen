@@ -6,6 +6,7 @@ image approval. The instructor must inspect the entire asset and its question.
 import base64
 import binascii
 import hashlib
+import json
 from pathlib import Path
 import struct
 import zlib
@@ -121,3 +122,13 @@ def student_assets(assets):
         public['original_filename'] = Path(public['original_filename']).name
         result.append({**public, 'data_base64': encoded})
     return result
+
+
+def visual_context_hash(rubric):
+    """Public visual inputs only; unrelated points/private review notes are excluded."""
+    assets = rubric.get('student_assets', [])
+    if not assets:
+        return None
+    projected = [{key: asset.get(key) for key in PUBLIC_FIELDS} for asset in assets]
+    return hashlib.sha256(json.dumps(projected, sort_keys=True, ensure_ascii=False,
+                                    allow_nan=False).encode('utf-8')).hexdigest()

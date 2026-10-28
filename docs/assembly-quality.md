@@ -18,7 +18,7 @@ part. Omit part keys for a whole question. The core validates targets and part
 keys, adds source/target identity hashes, and records the metadata revision and
 history with its mutation receipt. Supply an empty list to remove a relation.
 These are explicit reviewed judgments; lexical similarity does not discover them.
-After changing either stem or subparts, reannotate affected relations. Stale
+After changing either stem, subparts or reviewed diagram context, reannotate affected relations. Stale
 relations block selection until reviewed; unrelated reference/rubric changes do
 not invalidate a text relationship.
 
