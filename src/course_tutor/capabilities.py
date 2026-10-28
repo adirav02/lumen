@@ -124,6 +124,7 @@ def check_capabilities(workspace_path: Optional[Union[str, Path]] = None, host: 
         },
         "artifact_capabilities": {
             "assessment_paper": True,
+            "reviewed_png_snapshots": True,
             "pdf_export": pdf_export,
             "pdf_render_error": render_error,
             "pdf_requirement": "Saved test requests require a rendered, visually checked PDF; a saved assessment alone is incomplete.",

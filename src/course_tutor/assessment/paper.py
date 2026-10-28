@@ -1,6 +1,7 @@
 """Student-safe paper snapshots, independent of grading and reference solutions."""
 
 import json
+from ..questions.assets import snapshot_assets
 
 from ..errors import ValidationError
 from ..student import student_paper
@@ -36,7 +37,7 @@ def assembly_paper(con, job):
                 subparts.append(public)
         questions.append({'item_order': item['item_order'],
             'exercise_version_id': item['exercise_version_id'],
-            'question_text': saved['question_text'],
+            'question_text': saved['question_text'], 'student_assets': saved.get('student_assets', []),
             **({'presentation_text': saved['presentation']['presentation_text']} if 'presentation' in saved else {}),
             'subparts': saved.get('presentation', {}).get('subparts', subparts),
             'source_reference': reference, 'section': saved.get('section'),
@@ -49,7 +50,7 @@ def assembly_paper(con, job):
                if k in job['generation'].get('effective_blueprint', job['generation']['blueprint'])}, 'questions': questions})
 
 
-def assessment_paper(con, assessment_id, course_id=None):
+def assessment_paper(con, assessment_id, course_id=None, file_store=None):
     job = AssemblyRepository(con).get_by_assessment(assessment_id)
     if job and job['state'] == 'published':
         if course_id is not None and job['course_id'] != course_id:
@@ -78,6 +79,7 @@ def assessment_paper(con, assessment_id, course_id=None):
             'exercise_content_hash': compute_exercise_version_hash(version.question_text, version.reference_solution, version.rubric, version.subparts),
             'question_text': version.question_text, 'max_points': item.max_points,
             'subparts': version.subparts,
+            'student_assets': snapshot_assets(con, assessment.course_id, version.rubric, file_store),
             'source_reference': ({'source_version_id': source['source_version_id'],
                 'question_key': source['question_key'], 'original_filename': source['original_filename'],
                 'version_num': source['version_num'], 'file_hash': source['file_hash'],

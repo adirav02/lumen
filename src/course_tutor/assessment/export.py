@@ -109,6 +109,11 @@ def render_paper_html(paper):
     sections = []
     for question in paper['questions']:
         paragraphs = render_question_text(paper_question_text(question))
+        for asset in question.get('student_assets', []):
+            src = 'data:image/png;base64,' + asset['data_base64']
+            asset_citation = f"{asset['original_filename']} | v{asset['version_num']} | {asset['region']}"
+            paragraphs += ('<figure><img src="'+src+'" alt="'+escape(asset['alt'], quote=True)+'">'
+                '<figcaption>'+escape(asset['caption'])+'</figcaption><p class="source">'+escape(asset_citation)+'</p></figure>')
         source = question['source_reference']
         if source:
             labels = list(dict.fromkeys(span.get('label', '') for span in source['source_spans'] if span.get('label')))
@@ -116,16 +121,17 @@ def render_paper_html(paper):
             citation = f"{source['original_filename']} | v{source['version_num']} | {location}"
         else:
             citation = 'Generated question'
-        heading = question_label+' '+str(question['item_order'])
+        heading = escape(question_label+' '+str(question['item_order']))
         if question.get('section'):
-            heading = str(question['section'])+' · '+heading
+            heading = escape(str(question['section']))+' · '+heading
         if 'max_points' in question:
-            heading += ' · '+str(question['max_points'])+' points'
+            points = escape(str(question['max_points'])+' points')
+            heading += ' · '+('<bdi dir="ltr">'+points+'</bdi>' if rtl else points)
         for part in question.get('subparts', []):
             wording = part.get('question_text', part.get('text'))
             if wording:
                 paragraphs += '<p>'+formatted_text(str(wording))+'</p>'
-        sections.append('<section><h2>'+escape(heading)+'</h2><div class="question">'+paragraphs+
+        sections.append('<section'+(' class="with-assets"' if question.get('student_assets') else '')+'><h2>'+heading+'</h2><div class="question">'+paragraphs+
                         '</div><p class="source">'+escape(citation)+'</p><div class="answer-space"></div></section>')
     title = escape(paper['title'])
     point_total = (' · '+format(sum(q['max_points'] for q in paper['questions']), 'g')+' total points'
@@ -133,17 +139,19 @@ def render_paper_html(paper):
     duration = (' · '+str(paper['duration_minutes'])+' minutes') if 'duration_minutes' in paper else ''
     instructions = ''.join('<p>'+formatted_text(line)+'</p>' for line in paper.get('instructions', []))
     return f'''<!doctype html><html lang="{language}" dir="{direction}"><head><meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src data:">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src data:; img-src data:">
 <title>{title}</title><style>
 @page {{size:A4;margin:18mm; @bottom-center {{content:"Page " counter(page) " of " counter(pages);font:9pt Arial;color:#526477}}}}*{{box-sizing:border-box}}
 body{{font-family:Arial,"DejaVu Sans",sans-serif;color:#172537;line-height:1.7;margin:0;font-size:11pt}}
 main{{max-width:180mm;margin:auto}}h1{{font-size:23pt;margin:0 0 5mm}}h2{{font-size:15pt;margin:0 0 4mm;border-bottom:1px solid #ccd5df;padding-bottom:2mm}}
-p{{margin:2.5mm 0;overflow-wrap:anywhere}}.meta,.source{{font-size:9pt;color:#526477}}
+p{{margin:2.5mm 0;overflow-wrap:anywhere}}.meta,.source{{font-size:9pt;color:#526477;direction:ltr;unicode-bidi:isolate}}
 section{{break-before:page}}section:first-of-type{{break-before:auto}}h2,.source{{break-inside:avoid}}
 .formula{{direction:ltr;unicode-bidi:isolate}}math{{font-family:"STIX Two Math","Cambria Math",serif}}
 table{{border-collapse:collapse;font-size:9pt;width:100%;margin:4mm 0}}
 th,td{{border:1px solid #ccd5df;padding:2mm;text-align:start;overflow-wrap:anywhere}}
 thead{{display:table-header-group}}tr{{break-inside:avoid}}
+figure{{margin:4mm 0;break-inside:avoid}}figure img{{display:block;max-width:100%;max-height:75mm;width:auto;height:auto;object-fit:contain}}figcaption{{font-size:9pt}}
+.with-assets .answer-space{{display:none}}
 .answer-space{{height:45mm;margin:7mm 0;border-bottom:1px solid #d5dde6}}
 </style></head><body><main><h1>{title}</h1><p class="meta">{len(paper['questions'])} questions{point_total}{duration} · {escape(paper['assessment_id'])}</p>
 <p>Name ____________________ &nbsp; Date ____________________</p>

@@ -14,6 +14,9 @@ QUESTION_FIELDS = ('presentation_text', 'item_order', 'exercise_version_id', 'qu
 
 def student_question(question):
     public = {key: question[key] for key in QUESTION_FIELDS if key in question}
+    if question.get('student_assets'):
+        from .questions.assets import student_assets
+        public['student_assets'] = student_assets(question['student_assets'])
     public['subparts'] = []
     for part in question.get('subparts', []):
         if isinstance(part, str):
@@ -55,7 +58,7 @@ def student_paper(paper):
             'questions': [student_question(q) for q in paper['questions']]}
 
 
-def student_preview(con, course_id, version_id):
+def student_preview(con, course_id, version_id, file_store=None):
     version = ExerciseRepository(con).get_exercise_version(version_id)
     if not version or version.course_id != course_id or version.validation_state != 'validated':
         raise ValidationError('Student content requires a current validated question in this course.')
@@ -68,11 +71,12 @@ def student_preview(con, course_id, version_id):
     reference = dict(source) if source else None
     if reference:
         reference['source_spans'] = json.loads(reference['source_spans_json'])
-    return student_question({'exercise_version_id': version.id, 'question_text': version.question_text,
+    from .questions.assets import snapshot_assets
+    return student_question({'student_assets': snapshot_assets(con, course_id, version.rubric, file_store), 'exercise_version_id': version.id, 'question_text': version.question_text,
                              'subparts': version.subparts, 'source_reference': reference})
 
 
-def student_search(con, course_id, query, limit=20):
+def student_search(con, course_id, query, limit=20, file_store=None):
     from .questions.catalog import page_size, require_text
     page_size(limit)
     require_text(query, 'query')
@@ -83,5 +87,5 @@ def student_search(con, course_id, query, limit=20):
         WHERE v.course_id=? AND v.validation_state='validated'
         AND (q.id IS NULL OR (q.review_status='accepted' AND q.visual_review_status IN ('verified','not_required')))
         AND instr(lower(v.question_text),lower(?))>0 ORDER BY v.id LIMIT ?''', (course_id, query, limit)).fetchall()
-    return {'questions': [student_preview(con, course_id, row['id']) for row in rows],
+    return {'questions': [student_preview(con, course_id, row['id'], file_store=file_store) for row in rows],
             'scope': 'Validated reviewed stems, setups and data only; originals and private answers excluded.'}

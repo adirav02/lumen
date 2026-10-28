@@ -25,3 +25,7 @@ an answer mistakenly approved inside a stem cannot be removed by a field allowli
 This is an application content boundary; it does not restrict a workspace owner's
 filesystem access. A web service must expose only the student entry points and
 student artifact directory, with its own authentication/authorization.
+
+Reviewed question-only PNG assets are a separate explicit projection, not raw
+source expansion. See [student diagrams](student-assets.md) for source-version/hash
+binding, visual attestation, offline snapshots, path restrictions and supported limits.

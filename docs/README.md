@@ -6,7 +6,7 @@ Start with the root [README](../README.md) for installation and usage,
 | Area | Documents |
 |---|---|
 | Agent behavior | [Canonical instructions](agents.md), [agent profiles and skill layout](agent-profiles.md) |
-| Tutor operation | [CLI workflow](lumen-workflow.md), [tutoring](workflows/tutoring.md), [answer review](workflows/answer-review.md), [practice building](workflows/practice-building.md) |
+| Tutor operation | [CLI workflow](lumen-workflow.md), [tutoring](workflows/tutoring.md), [answer review](workflows/answer-review.md), [practice building](workflows/practice-building.md), [reviewed diagrams](student-assets.md) |
 | Course imports and history | [Course layout](course-layout.md), [question tracking](question-tracking.md), [example map](../examples/README.md) |
 | Release and current evidence | [Current readiness tracker](../development/docs/release-readiness.md), [usage/cost adapters and log](usage-measurement.md), [native adapter evidence](../development/docs/reports/evaluation/host-usage-2026-10-19.json), [current educational evaluation gates](../development/docs/current-status.md), [October audit](../development/docs/reports/audit-2026-10-18.md), [CI review](../development/docs/reports/ci-review.md), [historical verification checklist](../development/docs/reports/verification-checklist.md) |
 | Technical guarantees | [Core contract: schemas, migrations and API details](../development/docs/core-contract.md) |

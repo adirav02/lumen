@@ -34,6 +34,15 @@ Readiness now suggests public review/annotation operations with exact revisions,
 flags forced versus multiple or unknown selection, and gives marginal second-paper
 family deficits. Existing joint, capacity and exact/bounded-count semantics remain.
 
+Reviewed PNG diagrams now flow through the existing versioned rubric and assembly
+snapshots, with explicit image attestation, hash verification, offline rendering
+and student privacy guards. FE02 Figure V1 was delivered in an eight-page
+8-question/100-point/120-minute paper; the local reviewed bank now has 13 families
+(12 in the earlier text blueprint plus one diagram). All pages were inspected.
+A separate synthetic mixed Hebrew/English MathML/image smoke was inspected;
+no reviewed Hebrew HN101 original was available, so it is not a Hebrew course validation.
+See [reviewed asset workflow](../../docs/student-assets.md).
+
 Remaining release gates:
 
 - Live Claude Code discovery, invocation, source image access and resume: not run.

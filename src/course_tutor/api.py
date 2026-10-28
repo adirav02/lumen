@@ -815,12 +815,12 @@ class LumenCore:
     def student_preview(self, course_id, exercise_version_id):
         self._verify_not_detached()
         from .student import student_preview
-        return student_preview(self.con, course_id, exercise_version_id)
+        return student_preview(self.con, course_id, exercise_version_id, file_store=self.file_store)
 
     def student_search(self, course_id, query, limit=20):
         self._verify_not_detached()
         from .student import student_search
-        return student_search(self.con, course_id, query, limit)
+        return student_search(self.con, course_id, query, limit, file_store=self.file_store)
 
     def search_questions(self, course_id, query, limit=20):
         self._verify_not_detached()
@@ -1012,7 +1012,7 @@ class LumenCore:
     def assessment_paper(self, assessment_id: str, course_id: Optional[str] = None) -> Dict[str, Any]:
         self._verify_not_detached()
         from .assessment.paper import assessment_paper
-        return assessment_paper(self.con, assessment_id, course_id)
+        return assessment_paper(self.con, assessment_id, course_id, file_store=self.file_store)
 
     def assemble_exam(self, course_id: str, learner_id: str, blueprint: dict,
                       seed: int, request_id: str, title: Optional[str] = None) -> Dict[str, Any]:

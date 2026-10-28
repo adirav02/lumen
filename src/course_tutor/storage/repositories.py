@@ -1168,6 +1168,15 @@ class ExerciseRepository:
                     details={"expected_hash": expected_content_hash, "actual_hash": current_hash},
                 )
 
+            if status == 'validated' and 'student_assets' in effective_rubric:
+                from ..questions.assets import bind_assets
+                bound = bind_assets(self.con, ex_ver.course_id, effective_rubric['student_assets'])
+                if bound and not any(k.casefold() == 'visual_assets_reviewed' for k in checks_dict):
+                    raise ValidationError('Inspect every diagram and record visual_assets_reviewed for this exact exercise revision.')
+                effective_rubric = {**effective_rubric, 'student_assets': bound}
+                if effective_rubric != ex_ver.rubric:
+                    rubric = effective_rubric
+
             solution_changed = (
                 reference_solution is not None
                 and reference_solution != ex_ver.reference_solution

@@ -12,6 +12,7 @@ it makes no global optimality claim. Option boundaries are never inferred.
 
 import copy
 import json
+from ..questions.assets import snapshot_assets
 import math
 import random
 import uuid
@@ -110,7 +111,7 @@ def _allocate(slots, candidates, rows, conflicts, weights, seed, constraints):
 
 
 def prepare_exam(con, course_id, learner_id, blueprint, seed, *, live_request_ids=None,
-                 exclude_request_id=None):
+                 exclude_request_id=None, file_store=None):
     """Return private snapshots only after full readiness; never write DB/files.
 
     live_request_ids must come from the publication coordinator's lock checks.
@@ -166,7 +167,8 @@ def prepare_exam(con, course_id, learner_id, blueprint, seed, *, live_request_id
                     'max_points': slot.get('max_points', 1),
                     'exercise_revision': len(version.revision_history) + 1,
                     'exercise_content_hash': digest,
-                    'snapshot': {'question_text': version.question_text, 'subparts': copy.deepcopy(version.subparts),
+                    'snapshot': {'student_assets': snapshot_assets(con, course_id, version.rubric, file_store),
+                        'question_text': version.question_text, 'subparts': copy.deepcopy(version.subparts),
                         'rubric': copy.deepcopy(version.rubric), 'reference_solution': version.reference_solution,
                         'source_reference': provenance, 'provenance': provenance,
                         'section': slot.get('section'), 'question_type': slot.get('question_type'),
@@ -406,7 +408,7 @@ def assemble_exam(core, course_id, learner_id, blueprint, seed, request_id, titl
                 prepared = None
         else:
             prepared = prepare_exam(core.con, course_id, learner_id, blueprint, seed,
-                                    live_request_ids=live)
+                                    live_request_ids=live, file_store=core.file_store)
     from ..course_layout import test_directory
     assessment_id = existing['assessment_id'] if existing else str(uuid.uuid4())
     final = Path(existing['final_path']) if existing else test_directory(
@@ -426,7 +428,7 @@ def assemble_exam(core, course_id, learner_id, blueprint, seed, request_id, titl
             if job and not complete:
                 _validate_saved(core, repo, job, live)
             elif not job:
-                prepared = prepare_exam(core.con, course_id, learner_id, blueprint, seed, live_request_ids=live)
+                prepared = prepare_exam(core.con, course_id, learner_id, blueprint, seed, live_request_ids=live, file_store=core.file_store)
             _recover(core, repo, dead)
             if job:
                 job = repo.claim(request_id, input_hash, job['owner_token'], str(uuid.uuid4()))

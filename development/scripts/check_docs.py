@@ -48,7 +48,7 @@ def check_links(root, entries):
     return errors
 
 ACTIVE_LINK_ENTRIES = ('README.md', 'AGENTS.md', 'development/README.md', 'docs/README.md',
-                       'docs/assembly-quality.md', 'docs/exam-self-check.md', 'development/docs/current-status.md',
+                       'docs/assembly-quality.md', 'docs/student-assets.md', 'docs/exam-self-check.md', 'development/docs/current-status.md',
                        'development/docs/live-host-handoff.md')
 
 
