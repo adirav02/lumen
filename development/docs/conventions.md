@@ -122,10 +122,16 @@ All temporary workspaces are removed on success or failure. `TMPDIR` must point
 outside the checkout for this probe. No private materials or service APIs are used.
 
 The Python 3.10–3.15 CI matrix requires a supported PDF browser before running
-the full suite; local PDF checks may skip when none is installed. The test wrapper
+the full suite with `--fail-on-skip`; any skipped test fails CI. Local PDF checks may
+skip when none is installed unless the same strict option is requested. The wrapper
 reports skips and preserves their reasons in `.tmp/test-last.log`; CI uploads the
-log with per-version JUnit XML even after failure. Rendering tests do not replace
-human visual review. Release preparation reuses these gates and exact validated
+log with per-version JUnit XML even after failure, plus the tested-tree receipt on
+success. Strict skip failures remove prior receipts and retain reasons in the log.
+Rendering tests do not replace human visual review. Release preparation reuses
+these gates and exact validated
 artifacts with read-only build permissions; only the draft-release job can write.
+The package job records `SHA256SUMS` after validation. The release job verifies it
+before creating the draft and includes the manifest with the packages. These
+checks detect handoff corruption; they are not artifact signing or provenance attestations.
 Hosted runs, matrix compatibility and repository branch protections need separate
 GitHub verification; a local run establishes only its actual Python/environment.

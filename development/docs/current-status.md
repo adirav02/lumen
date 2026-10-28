@@ -46,6 +46,11 @@ A conservative qualitative cue pair is excluded through reviewed disclosure meta
 superseded local drafts and their retirement receipts are preserved.
 See [reviewed asset workflow](../../docs/student-assets.md).
 
+CI/CD follow-up: the Python matrix fails on skipped tests and preserves successful
+source-tree receipts alongside JUnit/log diagnostics. Draft releases verify package
+SHA-256 checksums from the validation job before attachment. These workflow changes
+are locally tested; a new hosted run remains pending an authorized push.
+
 Remaining release gates:
 
 - Live Claude Code discovery, invocation, source image access and resume: not run.

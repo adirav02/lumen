@@ -68,7 +68,7 @@ jobs:
 
       - name: Run pytest test suite
         run: |
-          python development/scripts/run_tests.py -ra --junitxml=test-results/pytest.xml
+          python development/scripts/run_tests.py --fail-on-skip -ra --junitxml=test-results/pytest.xml
 
       - name: Preserve test results
         if: ${{ always() }}
@@ -78,6 +78,7 @@ jobs:
           path: |
             test-results/*.xml
             .tmp/test-last.log
+            .tmp/test-receipt.json
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
@@ -119,6 +120,10 @@ jobs:
       - name: Verify clean wheel installation in isolated environment
         run: |
           python development/scripts/smoke_installed.py --wheel dist/*.whl
+
+      - name: Record validated distribution checksums
+        working-directory: dist
+        run: sha256sum -- *.whl *.tar.gz > SHA256SUMS
 
       - name: Preserve validated distributions
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

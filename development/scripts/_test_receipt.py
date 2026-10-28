@@ -40,7 +40,7 @@ def tree_identity(root):
 
 def is_full_suite(args):
     """Reporting-only flags do not narrow coverage; unknown options stay conservative."""
-    flags = {'-q', '--quiet', '-v', '--verbose', '-ra', '-rA',
+    flags = {'-q', '--quiet', '-v', '--verbose', '-ra', '-rA', '--fail-on-skip',
              '--disable-warnings', '--no-header', '--no-summary'}
     valued = {'--junitxml', '--junit-xml', '--junit-prefix', '--color', '--tb'}
     arguments = iter(args)

@@ -1,6 +1,6 @@
 # TL;DR: Run pytest with a compact summary and a complete local log.
 # Status: active; date: 2026-10-19.
-"""Usage: python development/scripts/run_tests.py [path ...] [-k expression]."""
+"""Usage: python development/scripts/run_tests.py [--fail-on-skip] [pytest arguments]."""
 import json
 import re
 from pathlib import Path
@@ -42,6 +42,8 @@ class Summary:
         self.record(report)
 
     def pytest_collectreport(self, report):
+        if report.skipped:
+            self.skipped += 1
         self.record(report)
 
 
@@ -57,6 +59,8 @@ def child(result_path, args):
 
 
 def main(args):
+    fail_on_skip = '--fail-on-skip' in args
+    pytest_args = [arg for arg in args if arg != '--fail-on-skip']
     log_path = ROOT / '.tmp/test-last.log'
     log_path.parent.mkdir(parents=True, exist_ok=True)
     receipt_path = ROOT / '.tmp/test-receipt.json'
@@ -75,11 +79,18 @@ def main(args):
         with log_path.open('w') as log:
             result = subprocess.run(
                 [sys.executable, str(Path(__file__).resolve()),
-                 '--_pytest-child', str(result_path), *args],
+                 '--_pytest-child', str(result_path), *pytest_args],
                 stdout=log, stderr=subprocess.STDOUT,
             )
         summary = json.loads(result_path.read_text()) if result_path.exists() else {}
-    if result.returncode == 0:
+    code = result.returncode
+    if code == 0 and fail_on_skip and summary.get('skipped'):
+        message = f"FAIL: {summary['skipped']} skipped tests (--fail-on-skip requires complete execution)"
+        print(message)
+        with log_path.open('a') as log:
+            log.write(message + '\n')
+        code = 1
+    if code == 0:
         receipt = save_receipt(ROOT, before, summary.get('passed', 0), args)
         print(f"PASS {summary.get('passed', 0)} tests")
         if summary.get('skipped'):
@@ -92,7 +103,7 @@ def main(args):
             for line in failure['errors']:
                 print(line)
         print(log_path)
-    return result.returncode
+    return code
 
 
 if __name__ == '__main__':

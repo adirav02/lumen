@@ -109,3 +109,31 @@ def test_skips_remain_visible_in_compact_summary(runner):
     assert result.stdout.splitlines() == [
         'PASS 1 tests', f'SKIP 1 tests (reasons in {root / ".tmp/test-last.log"})']
     assert 'dependency unavailable' in (root / '.tmp/test-last.log').read_text()
+
+
+@pytest.mark.parametrize('source', [
+    'import pytest\ndef test_optional():\n    pytest.skip("unavailable PDF dependency")\n',
+    'import pytest\npytest.skip("unavailable PDF dependency", allow_module_level=True)\n',
+])
+def test_strict_run_rejects_call_and_collection_skips_without_success_receipt(runner, source):
+    run, root = runner
+    (root / 'test_sample.py').write_text('def test_ok():\n    pass\n')
+    assert run().returncode == 0  # A previous success must not survive the failed gate.
+    (root / 'test_optional.py').write_text(source)
+    result = run('--fail-on-skip', '-ra')
+    assert result.returncode == 1
+    assert 'FAIL: 1 skipped tests' in result.stdout
+    assert 'PASS' not in result.stdout
+    assert not (root / '.tmp/test-receipt.json').exists()
+    assert 'unavailable PDF dependency' in (root / '.tmp/test-last.log').read_text()
+
+
+def test_strict_complete_run_retains_full_suite_receipt(runner):
+    run, root = runner
+    (root / 'test_sample.py').write_text('def test_ok():\n    pass\n')
+    result = run('--fail-on-skip', '-ra', '--junitxml=.tmp/results.xml')
+    assert result.returncode == 0 and result.stdout == 'PASS 1 tests\n'
+    receipt = json.loads((root / '.tmp/test-receipt.json').read_text())
+    assert receipt['full_suite'] is True
+    assert '--fail-on-skip' in receipt['args']
+    assert (root / '.tmp/results.xml').is_file()

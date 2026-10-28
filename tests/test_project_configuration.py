@@ -142,5 +142,6 @@ def test_ci_uploads_compact_runner_diagnostics_even_on_failure():
     assert len(uploads) == 1
     assert uploads[0]['if'] == '${{ always() }}'
     config = uploads[0]['with']
-    assert set(config['path'].splitlines()) == {'test-results/*.xml', '.tmp/test-last.log'}
+    assert set(config['path'].splitlines()) == {
+        'test-results/*.xml', '.tmp/test-last.log', '.tmp/test-receipt.json'}
     assert config['include-hidden-files'] == 'true'
