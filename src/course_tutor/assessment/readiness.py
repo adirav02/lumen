@@ -2,7 +2,7 @@
 
 Inputs are limited to 100 slots and 100 requested questions. Similarity is a
 pairwise constraint, never a transitive family merge. Counts of exclusion reasons
-can overlap and are not additive. No content/solution/rubric columns are read.
+can overlap and are not additive. No content/solution/rubric columns are read. Instructor review actions never approve.
 """
 
 import copy
@@ -316,15 +316,16 @@ def _report_once(con, course_id, blueprint, learner_id, *, internal=False, live_
     topics = TopicRepository(con).list_topics(course_id)
     lookup = {key: t.id for t in topics for key in (t.id, t.slug)}
     rows = {r["id"]: dict(r) for r in con.execute("""SELECT v.id,v.validation_state,v.topic_mappings_json,
-        x.exercise_family,f.exact_hash,f.structure_hash FROM exercise_versions v
+        x.exercise_family,f.exact_hash,f.structure_hash,v.revision_history_json FROM exercise_versions v
         JOIN exercises x ON x.id=v.exercise_id LEFT JOIN question_fingerprints f ON f.exercise_version_id=v.id
         WHERE v.course_id=? ORDER BY v.id""", (course_id,))}
     for r in rows.values():
         r["occurrences"] = []
+        r["revision"] = len(_json(r.pop("revision_history_json"), list)) + 1
         mapping = _json(r.pop("topic_mappings_json"), list)
         r["topics"] = {lookup[m] for m in mapping if isinstance(m, str) and m in lookup}
         r["topics_unknown"] = not mapping or any(not isinstance(m, str) or m not in lookup for m in mapping)
-    for q in con.execute("""SELECT id,exercise_version_id,source_version_id,review_status,visual_review_status,metadata_json
+    for q in con.execute("""SELECT id,exercise_version_id,source_version_id,review_status,visual_review_status,metadata_json,revision
                              FROM question_occurrences WHERE course_id=? ORDER BY id""", (course_id,)):
         if q["exercise_version_id"] in rows:
             rows[q["exercise_version_id"]]["occurrences"].append(dict(q))
@@ -509,6 +510,10 @@ def _report_once(con, course_id, blueprint, learner_id, *, internal=False, live_
             slot['shortfall'] = max(0, slot['needed'] - slot['available'])
             slot['gaps'] = ([{'reason': 'question_constraints', 'slot_ids': [sid],
                              'shortfall': slot['shortfall']}] if slot['shortfall'] else [])
+    from .review_actions import actions
+    for slot in reports:
+        slot['review_actions'] = actions(slot, rows, constraints)
+        slot['marginal_extra_families_for_second_disjoint_paper'] = max(0, 2 * slot['needed'] - slot['available'])
     # Answer disclosures are directional metadata, but either selection order leaks.
     for vid, rules in constraints.items():
         for link in rules['gives_away']:
@@ -581,6 +586,13 @@ def _report_once(con, course_id, blueprint, learner_id, *, internal=False, live_
             if v in pool and link['exercise_version_id'] in pool:
                 result['warnings'].append({'reason': 'answer_disclosure', 'exercise_version_id': v,
                                            'target': link, 'message': 'These questions cannot appear in the same exam.'})
+    distinct = normal['distinct_exams']
+    result['selection_variation'] = {
+        'status': ('multiple_selections_available' if distinct['lower_bound'] > 1 else
+                   'forced_selection' if distinct['exact'] and distinct['count'] == 1 else
+                   'infeasible' if distinct['exact'] and distinct['count'] == 0 else 'unknown'),
+        'count_is_exact': distinct['exact'],
+        'note': 'Selection identity excludes order and option permutations. Different seeds are not guaranteed to choose different selections. Marginal second-paper deficits do not establish joint capacity.'}
     joint = normal["joint"]
     result["gaps"] = [] if joint["status"] == "feasible" else [
         {"slot_id": s["slot_id"], "section": s["section"], "topic_ids": s["topic_ids"],

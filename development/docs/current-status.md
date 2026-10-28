@@ -30,6 +30,10 @@ families serve four slots. This is local course-data review, not a shipped revie
 bank or independent unseen evaluation. Private evidence and PDFs are in
 `development/work/20261028-bank-readiness-visual/`. Originals are unchanged.
 
+Readiness now suggests public review/annotation operations with exact revisions,
+flags forced versus multiple or unknown selection, and gives marginal second-paper
+family deficits. Existing joint, capacity and exact/bounded-count semantics remain.
+
 Remaining release gates:
 
 - Live Claude Code discovery, invocation, source image access and resume: not run.

@@ -34,3 +34,21 @@ The four-question synthetic regression measures committed public mutation receip
 old path 10, batch path 3, including the same course/source setup. The candidate
 and metadata phase alone takes 8 versus 1. These are mutation counts, not token,
 latency or cost measurements; internal per-item SQL validation is retained.
+
+## Act on readiness blockers
+
+`blueprint-readiness` includes `slots[].review_actions` with version/occurrence
+identities, current revisions, overlapping blockers, prerequisite IDs and concrete
+public operation names. Inspect the source before extraction/visual acceptance;
+recompute answers before mathematical validation. Supply actual review inputs,
+then re-read revisions after every mutation. Suggestions are never approvals.
+Stale links require reviewed reannotation; include genuine prerequisites in a
+matching blueprint slot rather than deleting their relationships to force a fit.
+The report reads identities/statuses, not stems or solutions. Unannotated semantic
+or lexical references can still block the authoritative assembly check.
+
+`selection_variation.status` distinguishes multiple available selections, a forced
+selection, infeasibility and budget-limited uncertainty. It excludes order/option
+permutations and does not promise that every seed changes selection. Exact/bounded
+counts remain in `analysis.distinct_exams`. Per-slot second-paper family deficits
+are marginal hints only; joint capacity and pair/dependency constraints remain hard.
