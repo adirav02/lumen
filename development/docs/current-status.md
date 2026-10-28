@@ -3,7 +3,8 @@ Status: locally verified candidate; date: 2026-10-28.
 
 # Current evidence
 
-Candidate: uncommitted diff based on `634ca6be165d5ec9809259544fd1ebf8a67cd1fd`.
+Reliability commit: `7aa1d739f2e8865366dfc443ad8b22b15e9f1b69`, verified locally
+with 798 passing tests and no skips. Original baseline: `634ca6be165d5ec9809259544fd1ebf8a67cd1fd`.
 Verification on 2026-10-28: initial focused 24-test reliability run passed, including
 real PDF reference re-export. Full-suite results and artifact hashes are in the
 local report below. Baseline: Python 3.14.8, 785 passing tests, no skips.
@@ -19,6 +20,15 @@ source part, and omit extractor-confirmed empty pages. Source materials and acce
 Fresh HN101 solo evidence and final commands are recorded locally in
 `development/work/20261028-reliability-20261028/report.md`; this ignored private
 report is deliberately not a Markdown link in public navigation.
+
+HN101 bank review (2026-10-28): 12 eligible reviewed families, including four
+additional numeric questions from FE01/FE02. Three visually inspected 8-question,
+100-point, 120-minute papers have genuinely different selections from identical
+restored pre-state (seeds 42/7/19); all new instructions say “Scenarios are fictional.”
+Readiness counts 175 exact alternatives, but only one disjoint paper: five short
+families serve four slots. This is local course-data review, not a shipped reviewed
+bank or independent unseen evaluation. Private evidence and PDFs are in
+`development/work/20261028-bank-readiness-visual/`. Originals are unchanged.
 
 Remaining release gates:
 
@@ -36,5 +46,5 @@ Remaining release gates:
 - Usage/billing completeness: open. Dedicated project-matched session snapshots
   include prior session counters; they are not per-task or billing totals.
 
-Dependabot PR #1 remains separate maintenance. No commits, pushes, merges,
-remote-setting changes or releases are part of this candidate.
+Dependabot PR #1 remains separate maintenance. Commits are local only; no pushes,
+merges, remote-setting changes or releases are authorized.
