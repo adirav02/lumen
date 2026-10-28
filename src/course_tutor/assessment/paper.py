@@ -36,7 +36,9 @@ def assembly_paper(con, job):
                 subparts.append(public)
         questions.append({'item_order': item['item_order'],
             'exercise_version_id': item['exercise_version_id'],
-            'question_text': saved['question_text'], 'subparts': subparts,
+            'question_text': saved['question_text'],
+            **({'presentation_text': saved['presentation']['presentation_text']} if 'presentation' in saved else {}),
+            'subparts': saved.get('presentation', {}).get('subparts', subparts),
             'source_reference': reference, 'section': saved.get('section'),
             'max_points': item['max_points']})
     if not questions:
@@ -75,9 +77,7 @@ def assessment_paper(con, assessment_id, course_id=None):
             'exercise_revision': len(version.revision_history)+1,
             'exercise_content_hash': compute_exercise_version_hash(version.question_text, version.reference_solution, version.rubric, version.subparts),
             'question_text': version.question_text, 'max_points': item.max_points,
-            'subparts': [{'key': part if isinstance(part, str) else part.get('key', part.get('subpart_key', part.get('id'))),
-                          'required': part.get('required', True) if isinstance(part, dict) else True}
-                         for part in version.subparts],
+            'subparts': version.subparts,
             'source_reference': ({'source_version_id': source['source_version_id'],
                 'question_key': source['question_key'], 'original_filename': source['original_filename'],
                 'version_num': source['version_num'], 'file_hash': source['file_hash'],
@@ -85,6 +85,9 @@ def assessment_paper(con, assessment_id, course_id=None):
         })
     if not questions:
         raise ValidationError('Assessment contains no selected questions.')
+    from .references import resolve
+    from ..questions.constraints import load
+    questions = resolve(questions, load(con, assessment.course_id))
     return student_paper({'assessment_id': assessment.id, 'course_id': assessment.course_id,
             'title': assessment.title,
             **{k: assessment.blueprint[k] for k in ('instructions', 'duration_minutes')

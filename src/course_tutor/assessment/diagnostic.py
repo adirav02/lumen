@@ -122,9 +122,12 @@ class DiagnosticService:
 
         from ..questions.constraints import load, ordered_selection
         selected = [item.exercise_version_id for item in items]
-        ordered = ordered_selection(selected, load(self.con, course_id))
+        constraints = load(self.con, course_id)
+        ordered = ordered_selection(selected, constraints)
         if ordered is None or ordered != selected:
             raise ValidationError('Selection has missing/forward prerequisites, stale constraints or answer disclosures.')
+        from .references import resolve, selection_questions
+        resolve(selection_questions(self.con, course_id, selected), constraints)
         self.assessment_repo.create_assessment(assessment, items)
 
         return {

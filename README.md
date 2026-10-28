@@ -2,6 +2,8 @@
 
 Lumen is an evidence-based, portable course tutor and learning assistant for **OpenAI Codex**, **Anthropic Claude Code**, and **Google Antigravity**. It preserves original course materials, retrieves required knowledge with exact mathematical provenance, guides learners through targeted practice, and maintains a deterministic, audit-preserved record of demonstrated mastery.
 
+Current evidence: [2026-10-28 status](development/docs/current-status.md).
+
 Release validation remains open. See the [completed/remaining evidence tracker](development/docs/release-readiness.md)
 and [Claude Code test handoff](development/docs/reports/claude-handoff.md) for a friend with access.
 Tagged CI builds prepare draft releases while these gates remain open.
@@ -112,8 +114,7 @@ repeats. See [the CLI workflow](docs/lumen-workflow.md) for selection and persis
 
 For exam imports, use the [course extraction skill](.agents/skills/extract-course-questions/SKILL.md)
 and [course folder layout](docs/course-layout.md). The
-[beta course collection](examples/beta_courses/README.md) is reserved for upcoming
-public fixtures. Real course materials are not distributed with this repository;
+[maintained fixture guide](tests/fixtures/README.md) describes synthetic test inputs. Real course materials are not distributed with this repository;
 keep them in the gitignored `local-courses/` folder. Historical private-run reports
 are implementation evidence only and do not include their source data.
 
@@ -125,8 +126,9 @@ view of callback updates; inspect saved data with `lumen usage-summary -w .lumen
 The [usage/cost guide](docs/usage-measurement.md) explains measured scopes, native
 headless capture, project filtering, estimates and unavailable billing. Antigravity
 CLI capture has live evidence; Claude runtime verification is still open.
-The [broader educational evaluation](examples/educational_evaluation/README.md)
-provides 16 local reviewed cases and a protocol for future unseen host testing.
+The [synthetic fixture guide](tests/fixtures/README.md) describes deterministic
+policy cases. [Independent educational evaluation](development/docs/current-status.md)
+remains open.
 
 Run the full automated suite, including provenance, extraction review, assembly and PDF privacy,
 attempt/evidence lifecycle, migrations, recovery, CLI and configuration regressions:

@@ -22,7 +22,7 @@ EXTRACTOR_VERSIONS = {
     DOCXExtractor: "1", VisualOnlyExtractor: "1", UnsupportedExtractor: "1",
 }
 UNIT_BUILDER_VERSION = "1"
-CATALOG_VERSION = "2"
+CATALOG_VERSION = "4"
 
 
 def canonical_json(value):

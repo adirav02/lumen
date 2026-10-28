@@ -114,3 +114,25 @@ This operation marks exports; release the old reservation separately when desire
 including re-exports of a cancelled assessment. Custom directories are not scanned;
 pass their exact path to supersede them. File publication still requires independent
 visual review before delivery.
+
+# Local references and catalog refresh (2026-10-28)
+
+Assembly resolves reference candidates through current reviewed `depends_on`
+links, exact exercise versions, target parts and source occurrence versions.
+For references across source papers, supply `reference_text` quoting the exact
+reference (for example `Question 1(a)`) on the reviewed dependency. Identical
+numbers in another source never establish a relationship. Missing, ambiguous or
+stale relationships block publication. Structured subpart wording is preserved in
+manual papers, and exact review quotes can occur in the stem or a subpart. Keep necessary setup in the target item;
+review shared-context groups and all subparts for answer disclosure. Lexical
+matching only flags candidates; it cannot certify semantic completeness.
+Private assembly snapshots retain original wording and detached presentation text;
+re-export uses the saved presentation, unaffected by later bank annotations.
+
+Catalog processor version 4 removes whitespace-only boundary spillover while
+conservatively retaining visual/uncertain sections even without text. To reprocess
+an older catalog, ingest the unchanged original with a **fresh request ID** and
+review the resulting source/exercise versions. Existing accepted catalogs and
+saved papers remain unchanged; old request IDs replay their original receipts.
+Do not rewrite historical source spans in place. Reviewed non-contiguous spans
+remain supported through explicit source spans.

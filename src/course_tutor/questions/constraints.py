@@ -33,10 +33,17 @@ def validate_metadata(con, course, vid, metadata):
             raise ValidationError(field + ' must be a list.')
         seen = set()
         for link in links:
-            if (not isinstance(link, dict) or set(link) - {'exercise_version_id', 'part', 'from_part', 'source_hash', 'target_hash'}
+            if (not isinstance(link, dict) or set(link) - {'exercise_version_id', 'part', 'from_part', 'source_hash', 'target_hash', 'reference_text'}
                     or not isinstance(link.get('exercise_version_id'), str) or link['exercise_version_id'] == vid):
                 raise ValidationError('Invalid directional question constraint.')
             target = _version(con, course, link['exercise_version_id'])
+            if 'reference_text' in link:
+                quote = link['reference_text']
+                wording = [source['question_text']] + [
+                    p[field] for p in json.loads(source['subparts_json']) if isinstance(p, dict)
+                    for field in ('text', 'question_text') if isinstance(p.get(field), str)]
+                if not isinstance(quote, str) or not quote.strip() or not any(quote in text for text in wording):
+                    raise ValidationError('reference_text must quote the exact reviewed source wording.')
             for key, version in (('part', target), ('from_part', source)):
                 if key not in link:
                     continue

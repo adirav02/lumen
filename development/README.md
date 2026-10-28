@@ -3,6 +3,8 @@ Status: active; date: 2026-10-26.
 
 # Development
 
+See [current verified status](docs/current-status.md).
+
 From the repository root:
 
 ```sh

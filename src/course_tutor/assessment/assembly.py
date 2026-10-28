@@ -180,6 +180,10 @@ def prepare_exam(con, course_id, learner_id, blueprint, seed, *, live_request_id
         for index, item in enumerate(items, 1):
             item['item_order'] = index
             item['snapshot']['question_constraints'] = constraints[item['exercise_version_id']]
+        from .references import resolve
+        presented = resolve([{**i['snapshot'], 'item_order': i['item_order'], 'exercise_version_id': i['exercise_version_id']} for i in items], constraints)
+        for item, public in zip(items, presented):
+            item['snapshot']['presentation'] = {k: public[k] for k in ('presentation_text', 'subparts')}
         from ..questions.constraints import paper_settings
         effective_blueprint = paper_settings(con, order, report['relaxation_policy']['effective_blueprint'])
         return {'items': items, 'readiness': report,

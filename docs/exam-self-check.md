@@ -14,7 +14,10 @@ claim an incomplete exam is done. This self-check applies to every course.
    wording and assumptions. Verify option mappings after shuffling. A retrieved
    official key or prior validation flag alone does not satisfy this check.
 3. Compare every selected question with the others: no question may depend on
-   another selected question or reveal its answer. Check shared setups, references,
+   another selected question unless it belongs to an explicitly reviewed shared-context
+   group with complete setup and correct local references in dependency order.
+   Independent items must be self-contained. No item or subpart may reveal an
+   assessed answer. Unresolved dependencies block delivery. Check shared setups, references,
    option text and solution cues, beyond family or lexical duplicate filters.
 4. Render and inspect every student PDF page. No original source question numbering
    may appear in the paper, including citations and cross-references. Use local

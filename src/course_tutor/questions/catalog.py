@@ -178,7 +178,9 @@ class QuestionCatalog:
                     flags.append("repeated_question_label")
                 spans = []
                 for left, right, sec in positions:
-                    if left < end and right > start:
+                    if (left < end and right >= start and
+                        (text[max(start, left):min(end, right)].strip() or
+                         sec.quality_flag not in ('clean', 'good', 'extracted', 'ok', 'empty'))):
                         spans.append({"section_index": sec.section_index, "start_offset": max(start, left) - left,
                                       "end_offset": min(end, right) - left})
                 body = text[start:end].strip()

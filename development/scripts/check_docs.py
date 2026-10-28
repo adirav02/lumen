@@ -15,8 +15,45 @@ def legacy_rgignore(legacy):
             + ''.join(f'/{name}\n' for name in sorted(legacy)))
 
 
-def check(root):
+def markdown_targets(path):
+    # Fenced and inline code examples are not links.
+    text = re.sub(r"(?ms)^(`{3,}|~{3,}).*?^\1[^\n]*$", "", path.read_text())
+    text = re.sub(r"`[^`\n]*`", "", text)
+    return re.findall(r"!?\[[^\]]*\]\(<?([^\s)>]+)>?(?:\s+[\"'][^\n]*?[\"'])?\)", text)
+
+
+def check_links(root, entries):
     errors = []
+    for name in entries:
+        path = root / name
+        if not path.is_file():
+            continue
+        for link in markdown_targets(path):
+            if re.match(r"[a-zA-Z][a-zA-Z0-9+.-]*:", link) or link.startswith('//'):
+                continue
+            target, _, anchor = unquote(link).partition('#')
+            dest = (path.parent / target).resolve() if target else path
+            if not dest.exists():
+                errors.append(f'{name}: missing local link {link}')
+            elif anchor and dest.is_file() and dest.suffix == '.md':
+                headings = re.findall(r'(?m)^#{1,6}\s+(.+?)\s*#*$', dest.read_text())
+                anchors, counts = set(), {}
+                for heading in headings:
+                    slug = re.sub(r'[^\w\- ]', '', heading.lower()).replace(' ', '-')
+                    count = counts.get(slug, 0); counts[slug] = count + 1
+                    anchors.add(slug + (f'-{count}' if count else ''))
+                anchors.update(re.findall(r'(?:id|name)=[\"\']([^\"\']+)', dest.read_text()))
+                if anchor not in anchors:
+                    errors.append(f'{name}: missing anchor {link}')
+    return errors
+
+ACTIVE_LINK_ENTRIES = ('README.md', 'AGENTS.md', 'development/README.md', 'docs/README.md',
+                       'docs/assembly-quality.md', 'docs/exam-self-check.md', 'development/docs/current-status.md',
+                       'development/docs/live-host-handoff.md')
+
+
+def check(root):
+    errors = check_links(root, ACTIVE_LINK_ENTRIES)
     baseline = root / 'development/scripts/legacy_docs.json'
     legacy = set(json.loads(baseline.read_text())['files']) if baseline.exists() else set()
     if legacy:

@@ -8,7 +8,7 @@ import re
 from .errors import ValidationError
 from .storage.repositories import ExerciseRepository
 
-QUESTION_FIELDS = ('item_order', 'exercise_version_id', 'question_text', 'section', 'max_points',
+QUESTION_FIELDS = ('presentation_text', 'item_order', 'exercise_version_id', 'question_text', 'section', 'max_points',
                    'exercise_revision', 'exercise_content_hash')
 
 
@@ -36,6 +36,8 @@ def student_question(question):
 
 
 def paper_question_text(question):
+    if 'presentation_text' in question:
+        return question['presentation_text']
     text = question['question_text']
     if question.get('source_reference'):
         # Only the leading source heading; never numbers inside the stem.
